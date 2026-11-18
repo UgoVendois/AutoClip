@@ -79,18 +79,49 @@ def _youtube(creds: dict) -> CheckResult:
     return CheckResult(False, f"Réponse inattendue de Google ({status} : {_error_text(body)}).", conclusive=False)
 
 
+GOOGLE_KEY_ERRORS = {
+    "API_KEY_INVALID": "Clé inconnue de Google : vérifie qu'elle est copiée en entier.",
+    "SERVICE_DISABLED": "Clé reconnue, mais YouTube Data API v3 n'est pas activée sur le projet de cette clé "
+                        "(attention à bien choisir le projet en haut de la console).",
+    "API_KEY_SERVICE_BLOCKED": "Clé reconnue, mais ses restrictions d'API excluent YouTube Data API v3 : "
+                               "ajoute-la dans Identifiants > ta clé > Restrictions relatives aux API.",
+    "API_KEY_HTTP_REFERRER_BLOCKED": "Clé limitée à des sites web (référents HTTP) : mets « Aucune » dans "
+                                     "Restrictions relatives aux applications.",
+    "API_KEY_IP_ADDRESS_BLOCKED": "Clé limitée à certaines adresses IP : mets « Aucune » dans Restrictions "
+                                  "relatives aux applications, ou ajoute ton IP.",
+    "API_KEY_ANDROID_APP_BLOCKED": "Clé réservée à une app Android : mets « Aucune » dans Restrictions "
+                                   "relatives aux applications.",
+    "API_KEY_IOS_APP_BLOCKED": "Clé réservée à une app iOS : mets « Aucune » dans Restrictions relatives "
+                               "aux applications.",
+    "ACCESS_DENIED": "Google refuse cette clé pour tous les services. Solution qui marche le plus souvent : "
+                     "crée une nouvelle clé dans le projet où YouTube Data API v3 est activée (sans cocher "
+                     "« lier à un compte de service »), puis remplace-la ici. Une clé créée avant l'activation "
+                     "des API, ou liée à un compte de service, reste souvent bloquée.",
+}
+
+
+def _google_reason(body: dict) -> str | None:
+    err = body.get("error") or {}
+    for detail in err.get("details", []) if isinstance(err, dict) else []:
+        if detail.get("reason"):
+            return detail["reason"]
+    return None
+
+
 def _youtube_data(creds: dict) -> CheckResult:
-    query = urllib.parse.urlencode({"part": "id", "id": "jNQXAC9IVRw", "key": creds["api_key"]})
+    query = urllib.parse.urlencode({"part": "id", "id": "jNQXAC9IVRw", "key": creds["api_key"].strip()})
     status, body = _request("GET", f"https://www.googleapis.com/youtube/v3/videos?{query}")
     if status == 200:
         return CheckResult(True, "Clé valide, API YouTube Data v3 activée.")
+    reason = _google_reason(body)
     message = _error_text(body)
+    if reason in GOOGLE_KEY_ERRORS:
+        return CheckResult(False, f"{GOOGLE_KEY_ERRORS[reason]} (code Google : {reason})")
     if "has not been used" in message or "disabled" in message.lower():
-        return CheckResult(False, "Clé reconnue, mais l'API YouTube Data v3 n'est pas activée sur ce projet.")
-    if status == 403 and ("permission denied" in message.lower() or "blocked" in message.lower()):
-        return CheckResult(False, "Clé reconnue, mais elle n'a pas accès à YouTube Data v3 : active l'API sur "
-                                  "le projet, et si la clé a des restrictions d'API, ajoute YouTube Data API v3.")
-    return CheckResult(False, f"Clé refusée ({status} : {message}).")
+        return CheckResult(False, GOOGLE_KEY_ERRORS["SERVICE_DISABLED"])
+    if status == 403 and "quota" in message.lower():
+        return CheckResult(True, "Clé valide, mais le quota YouTube du jour est épuisé.")
+    return CheckResult(False, f"Clé refusée ({status} : {message}{f', code {reason}' if reason else ''}).")
 
 
 def _twitch(creds: dict) -> CheckResult:

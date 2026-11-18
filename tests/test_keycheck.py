@@ -59,6 +59,15 @@ class TestKeyCheck(unittest.TestCase):
         self.assertIn("pas activée", res.message)
         self.assertIn("key=k", calls[0].full_url)
 
+    def test_youtube_data_reason_codes(self):
+        def body(reason):
+            return {"error": {"code": 403, "message": "Permission denied on the service.",
+                              "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": reason}]}}
+        res, _ = self.check("youtube_data", {"api_key": "k"}, 403, body("ACCESS_DENIED"))
+        self.assertIn("compte de service", res.message)
+        res, _ = self.check("youtube_data", {"api_key": "k"}, 403, body("API_KEY_SERVICE_BLOCKED"))
+        self.assertIn("Restrictions relatives aux API", res.message)
+
     def test_twitch(self):
         tw = {"client_id": "c", "client_secret": "s"}
         self.assertTrue(self.check("twitch", tw, 200, {"access_token": "t", "expires_in": 10})[0].ok)
