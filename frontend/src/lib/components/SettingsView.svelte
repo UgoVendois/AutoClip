@@ -533,7 +533,7 @@
             </a>
           {/if}
           <details class="mt-3 text-muted" open={Boolean(oauth.error)}>
-            <summary class="cursor-pointer font-medium text-ink">Google affiche « Erreur 403 : access_denied » ?</summary>
+            <summary class="cursor-pointer font-medium text-ink">Google affiche « Erreur 403 » (access_denied ou org_internal) ?</summary>
             <ol class="mt-2 list-decimal space-y-1 pl-5">
               <li>Ton projet Google Cloud est en mode <strong>Test</strong> : seuls les comptes listés comme testeurs peuvent se connecter.</li>
               <li>
@@ -543,6 +543,7 @@
               </li>
               <li>Clique sur Annuler ici, puis sur « Connecter une chaîne YouTube ».</li>
             </ol>
+            <p class="mt-2"><strong>« Erreur 403 : org_internal »</strong> : l'application est de type <strong>Interne</strong> (réservée aux comptes d'une organisation Google Workspace). Dans la même page Audience, clique sur « Rendre externe » puis ajoute ton adresse en utilisateur test. Si le bouton n'existe pas, le projet appartient à une organisation (école, entreprise) : crée un nouveau projet avec ton compte Gmail personnel, sans organisation.</p>
             <p class="mt-2">« Cette application n'a pas été validée par Google » : clique sur Paramètres avancés, puis « Accéder à AutoClip ». C'est normal pour ton propre projet.</p>
           </details>
           {#if oauth.error}

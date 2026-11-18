@@ -49,7 +49,9 @@ def _client_config() -> dict:
 
 
 HELP_403 = ("Si Google a affiché « Erreur 403 : access_denied », ton projet Google Cloud est en mode Test : "
-            "ajoute ton adresse Gmail dans Google Auth Platform > Audience > Utilisateurs test, puis réessaie.")
+            "ajoute ton adresse Gmail dans Google Auth Platform > Audience > Utilisateurs test, puis réessaie. "
+            "« Erreur 403 : org_internal » : l'application est réservée à une organisation (type Interne) : "
+            "passe-la en Externe dans Google Auth Platform > Audience.")
 CONNECT_TIMEOUT = 300
 
 
