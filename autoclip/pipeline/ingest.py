@@ -50,3 +50,52 @@ def download(url: str, directory: Path) -> Path:
             raise RuntimeError("yt-dlp n'a produit aucun fichier")
         path = candidates[0]
     return path
+
+
+def _ydl():
+    try:
+        import yt_dlp
+    except ImportError as exc:  # pragma: no cover
+        raise PermanentError("yt-dlp n'est pas installé dans l'environnement") from exc
+    return yt_dlp
+
+
+def download_section(url: str, start: float, end: float, dest: Path) -> Path:
+    """Télécharge seulement [start, end] (vidéo + son) dans `dest` (sans extension)."""
+    existing = [p for p in dest.parent.glob(dest.name + ".*") if p.suffix not in (".part", ".ytdl")]
+    if existing:
+        return existing[0]
+    yt_dlp = _ydl()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    opts = {
+        "outtmpl": str(dest) + ".%(ext)s",
+        "format": "bv*[height<=1080]+ba/b[height<=1080]/b",
+        "merge_output_format": "mp4",
+        "download_ranges": yt_dlp.utils.download_range_func(None, [(start, end)]),
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([url])
+    found = [p for p in dest.parent.glob(dest.name + ".*") if p.suffix not in (".part", ".ytdl")]
+    if not found:
+        raise RuntimeError("yt-dlp n'a produit aucun extrait")
+    return found[0]
+
+
+def download_audio(url: str, dest: Path) -> Path:
+    """Piste audio seule (bien plus légère que la vidéo), pour mesurer l'énergie."""
+    existing = [p for p in dest.parent.glob(dest.name + ".*") if p.suffix not in (".part", ".ytdl")]
+    if existing:
+        return existing[0]
+    yt_dlp = _ydl()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    opts = {"outtmpl": str(dest) + ".%(ext)s", "format": "worstaudio/bestaudio/worst",
+            "noplaylist": True, "quiet": True, "no_warnings": True}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([url])
+    found = [p for p in dest.parent.glob(dest.name + ".*") if p.suffix not in (".part", ".ytdl")]
+    if not found:
+        raise RuntimeError("yt-dlp n'a produit aucun fichier audio")
+    return found[0]

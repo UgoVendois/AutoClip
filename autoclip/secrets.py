@@ -17,6 +17,8 @@ CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
     "tiktok": ("client_key", "client_secret"),
     "instagram": ("app_id", "app_secret"),
     "anthropic": ("api_key",),
+    "twitch": ("client_id", "client_secret"),
+    "youtube_data": ("api_key",),  # lecture seule : commentaires horodatés
 }
 
 _backend: Any = None  # remplaçable dans les tests

@@ -13,6 +13,8 @@ dependencies = [
     "google-auth-oauthlib>=1.2",
     "google-auth-httplib2>=0.2",
     "pywebview>=5.0",
+    "anthropic>=2.10",
+    "websockets>=13",
 ]
 
 [project.optional-dependencies]

@@ -30,6 +30,13 @@ class BotPatch(BaseModel):
     name: str | None = None
     dry_run: bool | None = None
     clip_settings: dict[str, Any] | None = None
+    ai_settings: dict[str, Any] | None = None
+
+
+class WatchIn(BaseModel):
+    platform: str
+    channel: str
+    interval_minutes: int = 60
 
 
 class SourceIn(BaseModel):
@@ -83,6 +90,7 @@ def create_app(home: Path) -> FastAPI:
             "home": str(paths.home),
             "jobs": JobQueue(conn).stats(),
             "review": conn.execute("SELECT COUNT(*) FROM clip WHERE status = 'review'").fetchone()[0],
+            "alerts": conn.execute("SELECT COUNT(*) FROM alert WHERE seen = 0").fetchone()[0],
         }
 
     # -- bots -------------------------------------------------------------------
@@ -112,6 +120,8 @@ def create_app(home: Path) -> FastAPI:
         sched = conn.execute("SELECT * FROM schedule WHERE bot_id = ?", (bot_id,)).fetchone()
         bot["schedule"] = dict(sched) if sched else None
         bot["stats"] = services.bot_stats(conn, bot_id)
+        bot["ai_settings"] = services.ai_settings(row)
+        bot["watches"] = _rows(conn.execute("SELECT * FROM watch WHERE bot_id = ? ORDER BY id", (bot_id,)))
         return bot
 
     @api.patch("/bots/{bot_id}")
@@ -167,6 +177,79 @@ def create_app(home: Path) -> FastAPI:
             "published_per_day": [{"day": d, "count": n} for d, n in per_day.items()],
             "next_publication": nxt,
         }
+
+    # -- découverte automatique et IA ---------------------------------------------
+    @api.get("/bots/{bot_id}/watches")
+    def watches(bot_id: int, conn=Depends(get_conn)):
+        guard(services.get_bot, conn, bot_id)
+        return _rows(conn.execute("SELECT * FROM watch WHERE bot_id = ? ORDER BY id", (bot_id,)))
+
+    @api.post("/bots/{bot_id}/watches", status_code=201)
+    def add_watch(bot_id: int, body: WatchIn, conn=Depends(get_conn)):
+        return {"id": guard(services.add_watch, conn, bot_id, body.platform, body.channel, body.interval_minutes)}
+
+    @api.delete("/watches/{watch_id}")
+    def delete_watch(watch_id: int, conn=Depends(get_conn)):
+        guard(services.remove_watch, conn, watch_id)
+        return {"ok": True}
+
+    @api.get("/bots/{bot_id}/discovered")
+    def discovered(bot_id: int, conn=Depends(get_conn)):
+        return _rows(conn.execute("SELECT * FROM discovered WHERE bot_id = ? ORDER BY id DESC LIMIT 200", (bot_id,)))
+
+    @api.get("/bots/{bot_id}/ai-usage")
+    def ai_usage(bot_id: int, conn=Depends(get_conn)):
+        from .ai.budget import today, used_tokens
+
+        bot = guard(services.get_bot, conn, bot_id)
+        day = today()
+        return {"day": day, "used": used_tokens(conn, bot_id, day),
+                "budget": services.ai_settings(bot)["daily_token_budget"],
+                "history": _rows(conn.execute("SELECT * FROM ai_usage WHERE bot_id = ? ORDER BY day DESC LIMIT 60",
+                                              (bot_id,)))}
+
+    @api.get("/alerts")
+    def alerts(unseen: bool = False, conn=Depends(get_conn)):
+        return _rows(services.list_alerts(conn, unseen_only=unseen))
+
+    @api.post("/alerts/{alert_id}/seen")
+    def alert_seen(alert_id: int, conn=Depends(get_conn)):
+        with db.tx(conn):
+            conn.execute("UPDATE alert SET seen = 1 WHERE id = ?", (alert_id,))
+        return {"ok": True}
+
+    twitch_login: dict[str, Any] = {}
+
+    @api.post("/twitch/login")
+    def twitch_login_start():
+        """Renvoie le code à saisir sur twitch.tv/activate ; la fin de la connexion
+        se fait en arrière-plan (voir GET /api/twitch/status)."""
+        import threading
+
+        from .discovery import twitch
+
+        try:
+            device = twitch.start_device_login()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(400, str(exc)) from exc
+        twitch_login.clear()
+        twitch_login.update(state="pending")
+
+        def finish():
+            try:
+                twitch_login.update(state="connected", login=twitch.finish_device_login(device))
+            except Exception as exc:  # noqa: BLE001
+                twitch_login.update(state="error", error=str(exc))
+
+        threading.Thread(target=finish, daemon=True).start()
+        return {"verification_uri": device["verification_uri"], "user_code": device["user_code"],
+                "expires_in": device["expires_in"]}
+
+    @api.get("/twitch/status")
+    def twitch_status():
+        token = secrets.get_json("token:twitch:user")
+        return {"connected": bool(token), "login": token.get("login") if token else None,
+                "login_flow": twitch_login or None}
 
     # -- clips et file d'approbation -------------------------------------------
     @api.get("/clips")

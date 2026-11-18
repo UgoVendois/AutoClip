@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .config import DEFAULT_CLIP_SETTINGS, DEFAULT_SETTINGS
+from .config import DEFAULT_AI_SETTINGS, DEFAULT_CLIP_SETTINGS, DEFAULT_SETTINGS
 from .db import tx
 from .jobs.queue import JobQueue
 from .scheduler import parse_hhmm, weekday_mask
@@ -65,10 +65,40 @@ def create_bot(conn: sqlite3.Connection, name: str, *, dry_run: bool | None = No
     return cur.lastrowid
 
 
+def ai_settings(row: sqlite3.Row) -> dict[str, Any]:
+    return {**DEFAULT_AI_SETTINGS, **json.loads(row["ai_settings"])}
+
+
+AI_PROVIDERS = ("none", "anthropic", "ollama", "fake")
+
+
+def _check_ai_settings(values: dict[str, Any]) -> None:
+    unknown = set(values) - set(DEFAULT_AI_SETTINGS)
+    if unknown:
+        raise ServiceError(f"réglages IA inconnus : {', '.join(sorted(unknown))}")
+    merged = {**DEFAULT_AI_SETTINGS, **values}
+    if merged["provider"] not in AI_PROVIDERS:
+        raise ServiceError(f"fournisseur d'IA : {', '.join(AI_PROVIDERS)}")
+    if merged["effort"] not in ("low", "medium", "high"):
+        raise ServiceError("effort : low, medium ou high")
+    if not isinstance(merged["daily_token_budget"], int) or merged["daily_token_budget"] < 0:
+        raise ServiceError("daily_token_budget : entier positif (tokens par jour)")
+    if not 1 <= merged["max_windows"] <= 30:
+        raise ServiceError("max_windows : entre 1 et 30")
+    if not 0 <= merged["min_score"] <= 100:
+        raise ServiceError("min_score : entre 0 et 100")
+
+
 def update_bot(conn: sqlite3.Connection, bot_id: int, *, name: str | None = None,
-               dry_run: bool | None = None, clip_settings: dict[str, Any] | None = None) -> None:
+               dry_run: bool | None = None, clip_settings: dict[str, Any] | None = None,
+               ai_settings: dict[str, Any] | None = None) -> None:
     bot = get_bot(conn, bot_id)
+    if ai_settings is not None:
+        _check_ai_settings({**json.loads(bot["ai_settings"]), **ai_settings})
     with tx(conn):
+        if ai_settings is not None:
+            merged_ai = {**json.loads(bot["ai_settings"]), **ai_settings}
+            conn.execute("UPDATE bot SET ai_settings = ? WHERE id = ?", (json.dumps(merged_ai), bot_id))
         if name is not None:
             conn.execute("UPDATE bot SET name = ? WHERE id = ?", (name.strip(), bot_id))
         if dry_run is not None:
@@ -238,3 +268,40 @@ def bot_stats(conn: sqlite3.Connection, bot_id: int) -> dict[str, int]:
     rows = conn.execute("SELECT status, COUNT(*) AS n FROM clip WHERE bot_id = ? GROUP BY status",
                         (bot_id,))
     return {r["status"]: r["n"] for r in rows}
+
+
+# -- découverte automatique ---------------------------------------------------------
+
+def add_watch(conn: sqlite3.Connection, bot_id: int, platform: str, channel: str,
+              interval_minutes: int = 60) -> int:
+    from .discovery import REGISTRY
+
+    get_bot(conn, bot_id)
+    if platform not in REGISTRY:
+        raise ServiceError(f"plateforme : {', '.join(sorted(REGISTRY))}")
+    if interval_minutes < 5:
+        raise ServiceError("vérification au plus toutes les 5 minutes")
+    channel = channel.strip()
+    if not channel:
+        raise ServiceError("chaîne vide")
+    with tx(conn):
+        conn.execute(
+            """INSERT INTO watch (bot_id, platform, channel, interval_minutes, created_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (bot_id, platform, channel) DO UPDATE SET
+                   interval_minutes = excluded.interval_minutes, enabled = 1""",
+            (bot_id, platform, channel, interval_minutes, time.time()))
+        return conn.execute("SELECT id FROM watch WHERE bot_id = ? AND platform = ? AND channel = ?",
+                            (bot_id, platform, channel)).fetchone()["id"]
+
+
+def remove_watch(conn: sqlite3.Connection, watch_id: int) -> None:
+    with tx(conn):
+        cur = conn.execute("DELETE FROM watch WHERE id = ?", (watch_id,))
+    if cur.rowcount != 1:
+        raise ServiceError(f"surveillance {watch_id} introuvable")
+
+
+def list_alerts(conn: sqlite3.Connection, *, unseen_only: bool = False) -> list[sqlite3.Row]:
+    query = "SELECT * FROM alert" + (" WHERE seen = 0" if unseen_only else "") + " ORDER BY created_at DESC LIMIT 100"
+    return conn.execute(query).fetchall()

@@ -51,5 +51,19 @@ DEFAULT_CLIP_SETTINGS: dict[str, object] = {
     "tags": [],
 }
 
+# Découverte automatique et IA, propres à chaque bot (colonne `bot.ai_settings`).
+DEFAULT_AI_SETTINGS: dict[str, object] = {
+    "provider": "none",  # none | anthropic | ollama | fake
+    "model": None,  # None = modèle par défaut du fournisseur
+    "effort": "low",  # anthropic : low | medium | high
+    "daily_token_budget": 200_000,  # entrée + sortie, tous appels du jour
+    "max_windows": 8,  # fenêtres présélectionnées par vidéo
+    "density_seconds": 30,  # fenêtre glissante de densité du chat
+    "margin_seconds": 8,  # marge autour d'un pic
+    "min_score": 60,  # score IA minimal (0-100) pour proposer un clip
+    "clips_per_video": 3,
+    "backfill_hours": 48,  # à l'ajout d'une chaîne : contenus récents à reprendre
+}
+
 API_HOST = "127.0.0.1"
 API_PORT = 8765

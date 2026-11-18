@@ -66,6 +66,12 @@ class Daemon:
                 log.exception("erreur du planificateur")
             self.stop_event.wait(self.tick_seconds)
 
+    def _chat_recorder(self) -> None:
+        """Enregistre le chat des lives Twitch suivis (inactif sans compte Twitch connecté)."""
+        from .discovery.twitch import ChatRecorder
+
+        ChatRecorder(self.worker_rt.paths.db, self.stop_event).run()
+
     def _start_background(self) -> None:
         orphans = self.worker_rt.ctx.queue.requeue_orphans()
         if orphans:
@@ -74,6 +80,7 @@ class Daemon:
             threading.Thread(target=self.worker_rt.worker.run_forever, args=(self.stop_event,),
                              name="worker", daemon=True),
             threading.Thread(target=self._scheduler_loop, name="scheduler", daemon=True),
+            threading.Thread(target=self._chat_recorder, name="twitch-chat", daemon=True),
         ]
         for t in self._threads:
             t.start()

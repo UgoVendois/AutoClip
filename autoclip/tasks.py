@@ -27,7 +27,8 @@ from .publishers.dryrun import DryRunPublisher
 log = logging.getLogger(__name__)
 
 LEASES = {"ingest": 3 * 3600, "transcribe": 6 * 3600, "analyze": 600, "render": 3600,
-          "publish": 3600}
+          "publish": 3600, "discover": 600, "presort": 2 * 3600, "prepare_window": 3600,
+          "ai_score": 1800}
 
 
 @dataclass
@@ -39,6 +40,7 @@ class Context:
     transcriber: Transcriber = field(default_factory=FasterWhisperTranscriber)
     force_dry_run: bool = False
     publisher_override: Callable[[str], Publisher] | None = None
+    ai_override: object | None = None  # AIProvider imposé (tests)
 
     def publisher(self, dry_run: bool, platform: str) -> Publisher:
         if dry_run or self.force_dry_run:
@@ -140,7 +142,7 @@ def run_analyze(ctx: Context, payload: dict) -> dict:
 
 def run_render(ctx: Context, payload: dict) -> dict:
     clip = ctx.conn.execute(
-        "SELECT c.*, s.media_path FROM clip c JOIN source s ON s.id = c.source_id WHERE c.id = ?",
+        "SELECT c.*, s.media_path AS source_media FROM clip c JOIN source s ON s.id = c.source_id WHERE c.id = ?",
         (payload["clip_id"],),
     ).fetchone()
     if clip is None:
@@ -150,8 +152,14 @@ def run_render(ctx: Context, payload: dict) -> dict:
     settings = services.bot_settings(services.get_bot(ctx.conn, clip["bot_id"]))
     style = {k: settings[k] for k in ("subtitle_words", "font", "font_size")}
     out = ctx.cache.path("render", f"clip-{clip['id']}-{short_hash(clip['start_ms'], clip['end_ms'], style)}.mp4")
-    render.render_clip(Path(clip["media_path"]), clip["start_ms"] / 1000, clip["end_ms"] / 1000,
-                       json.loads(clip["words"]), out, group_size=style["subtitle_words"],
+    # Clip découvert : le média est l'extrait téléchargé, qui commence à media_offset.
+    media = clip["media_path"] or clip["source_media"]
+    if not media:
+        raise PermanentError(f"clip {clip['id']} : aucun média source")
+    offset = clip["media_offset_ms"] / 1000
+    words = [{**w, "start": w["start"] - offset, "end": w["end"] - offset} for w in json.loads(clip["words"])]
+    render.render_clip(Path(media), clip["start_ms"] / 1000 - offset, clip["end_ms"] / 1000 - offset,
+                       words, out, group_size=style["subtitle_words"],
                        font=style["font"], font_size=style["font_size"])
     with tx(ctx.conn):
         ctx.conn.execute(
@@ -251,6 +259,12 @@ def dead_publish(ctx: Context, payload: dict, error: str) -> None:
                          (error, now, row["clip_id"]))
 
 
+def _discovery_tasks() -> dict[str, Task]:
+    from .discovery_tasks import DISCOVERY_TASKS
+
+    return DISCOVERY_TASKS
+
+
 TASKS: dict[str, Task] = {
     "ingest": Task(run_ingest, on_dead=dead_source),
     "transcribe": Task(run_transcribe, on_dead=dead_source),
@@ -258,3 +272,4 @@ TASKS: dict[str, Task] = {
     "render": Task(run_render, on_dead=dead_render),
     "publish": Task(run_publish, on_dead=dead_publish),
 }
+TASKS.update(_discovery_tasks())

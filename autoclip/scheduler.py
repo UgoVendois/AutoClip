@@ -111,7 +111,14 @@ class Scheduler:
                     planned, dispatched = planned + p, dispatched + d
                     if not d:
                         break
-        return {"planned": planned, "dispatched": dispatched}
+            from .discovery_tasks import enqueue_due_discoveries, resume_deferred
+
+            discoveries = enqueue_due_discoveries(self.conn, self.queue, now)
+            resumed = resume_deferred(self.conn, self.queue, now)
+        result = {"planned": planned, "dispatched": dispatched}
+        if discoveries or resumed:
+            result.update(discoveries=discoveries, resumed=resumed)
+        return result
 
     def _plan(self, bot_id: int, now: float) -> int:
         sched = self.conn.execute("SELECT * FROM schedule WHERE bot_id = ?", (bot_id,)).fetchone()

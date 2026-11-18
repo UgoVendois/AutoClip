@@ -181,6 +181,73 @@ def cmd_account(args) -> int:
     return 0
 
 
+def cmd_watch(args) -> int:
+    rt = _runtime(args)
+    conn = rt.ctx.conn
+    if args.action == "add":
+        watch_id = services.add_watch(conn, args.bot, args.platform, args.channel, args.every)
+        print(f"surveillance #{watch_id} : {args.platform} {args.channel}, toutes les {args.every} min")
+    elif args.action == "remove":
+        services.remove_watch(conn, args.watch)
+    else:
+        for w in conn.execute("SELECT * FROM watch ORDER BY bot_id, id"):
+            print(f"#{w['id']:<3} bot #{w['bot_id']:<3} {w['platform']:<8} {w['channel']:<30} "
+                  f"toutes les {w['interval_minutes']} min · dernière vérif. {_fmt_time(w['last_checked_at'])}")
+        for d in conn.execute("SELECT * FROM discovered ORDER BY id DESC LIMIT 15"):
+            print(f"  {d['platform']} {d['external_id']:<14} {d['status']:<9} {d['signal'] or '-':<8} "
+                  f"{d['title'][:50]}  {d['error'] or ''}")
+    return 0
+
+
+def cmd_ai(args) -> int:
+    rt = _runtime(args)
+    conn = rt.ctx.conn
+    if args.action == "set":
+        changes = {}
+        for item in args.values:
+            key, _, raw = item.partition("=")
+            try:
+                changes[key] = json.loads(raw)
+            except json.JSONDecodeError:
+                changes[key] = raw
+        services.update_bot(conn, args.bot, ai_settings=changes)
+    from .ai.budget import today, used_tokens
+
+    bot = services.get_bot(conn, args.bot)
+    settings = services.ai_settings(bot)
+    print(json.dumps(settings, indent=2, ensure_ascii=False))
+    print(f"aujourd'hui : {used_tokens(conn, args.bot, today())} / {settings['daily_token_budget']} tokens"
+          + ("  (dry run : faux fournisseur, aucun appel payant)" if bot["dry_run"] else ""))
+    return 0
+
+
+def cmd_alerts(args) -> int:
+    rt = _runtime(args)
+    alerts = services.list_alerts(rt.ctx.conn)
+    if not alerts:
+        print("aucune alerte")
+    for a in alerts:
+        print(f"{_fmt_time(a['created_at'])}  bot #{a['bot_id']}  {a['kind']}  {a['message']}")
+    return 0
+
+
+def cmd_twitch(args) -> int:
+    from .discovery import twitch
+
+    device = twitch.start_device_login()
+    print(f"Ouvre {device['verification_uri']} et saisis le code : {device['user_code']}")
+    print(f"connecté en tant que {twitch.finish_device_login(device)} (jeton dans le trousseau)")
+    return 0
+
+
+def cmd_discover(args) -> int:
+    rt = _runtime(args)
+    for w in rt.ctx.conn.execute("SELECT id FROM watch WHERE enabled = 1"):
+        rt.ctx.queue.enqueue("discover", {"watch_id": w["id"]})
+    print(f"{rt.worker.run_until_idle()} job(s) traité(s) ; file : {rt.ctx.queue.stats()}")
+    return 0
+
+
 def cmd_dry_run(args) -> int:
     from . import dryrun
 
@@ -288,6 +355,32 @@ def build_parser() -> argparse.ArgumentParser:
         lk.add_argument("account", type=int)
     for parser in ac.choices.values():
         parser.set_defaults(func=cmd_account)
+
+    wt = sub.add_parser("watch", help="chaînes YouTube / Twitch surveillées").add_subparsers(dest="action", required=True)
+    wa = wt.add_parser("add")
+    wa.add_argument("bot", type=int)
+    wa.add_argument("platform", choices=["youtube", "twitch"])
+    wa.add_argument("channel", help="pseudo, URL ou identifiant de la chaîne")
+    wa.add_argument("--every", type=int, default=60, help="minutes entre deux vérifications")
+    wt.add_parser("list")
+    wr = wt.add_parser("remove")
+    wr.add_argument("watch", type=int)
+    for parser in wt.choices.values():
+        parser.set_defaults(func=cmd_watch)
+
+    ai = sub.add_parser("ai", help="IA d'un bot : fournisseur, modèle, budget")
+    ai_sub = ai.add_subparsers(dest="action", required=True)
+    ai_show = ai_sub.add_parser("show")
+    ai_show.add_argument("bot", type=int)
+    ai_set = ai_sub.add_parser("set", help="ex. : ai set 1 provider=anthropic daily_token_budget=150000")
+    ai_set.add_argument("bot", type=int)
+    ai_set.add_argument("values", nargs="+", metavar="CLÉ=VALEUR")
+    for parser in ai_sub.choices.values():
+        parser.set_defaults(func=cmd_ai)
+
+    sub.add_parser("alerts", help="alertes (budget IA atteint...)").set_defaults(func=cmd_alerts)
+    sub.add_parser("twitch-login", help="connecter un compte Twitch (lecture du chat)").set_defaults(func=cmd_twitch)
+    sub.add_parser("discover", help="vérifie tout de suite les chaînes surveillées").set_defaults(func=cmd_discover)
 
     dr = sub.add_parser("dry-run", help="exécute tout le circuit sur une vidéo, sans publier")
     dr.add_argument("source", help="URL ou fichier vidéo")

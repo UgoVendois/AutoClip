@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS bot (
@@ -127,6 +127,120 @@ CREATE TABLE IF NOT EXISTS setting (
 """
 
 
+# Migrations appliquées dans l'ordre à une base plus ancienne.
+MIGRATIONS: dict[int, str] = {
+    2: """
+-- Phase 3 : découverte automatique et notation par IA.
+ALTER TABLE bot ADD COLUMN ai_settings TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE clip ADD COLUMN reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE clip ADD COLUMN origin TEXT NOT NULL DEFAULT 'heuristic';
+-- Extrait téléchargé (fenêtre) : le rendu part de ce fichier, décalé de media_offset_ms.
+ALTER TABLE clip ADD COLUMN media_path TEXT;
+ALTER TABLE clip ADD COLUMN media_offset_ms INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS watch (
+    id               INTEGER PRIMARY KEY,
+    bot_id           INTEGER NOT NULL REFERENCES bot(id) ON DELETE CASCADE,
+    platform         TEXT NOT NULL,
+    channel          TEXT NOT NULL,
+    channel_id       TEXT,
+    interval_minutes INTEGER NOT NULL DEFAULT 60 CHECK (interval_minutes >= 5),
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    last_checked_at  REAL,
+    created_at       REAL NOT NULL,
+    UNIQUE (bot_id, platform, channel)
+);
+
+-- Un contenu n'est découvert qu'une fois par bot (déduplication).
+CREATE TABLE IF NOT EXISTS discovered (
+    id           INTEGER PRIMARY KEY,
+    bot_id       INTEGER NOT NULL REFERENCES bot(id) ON DELETE CASCADE,
+    watch_id     INTEGER REFERENCES watch(id) ON DELETE SET NULL,
+    source_id    INTEGER REFERENCES source(id) ON DELETE SET NULL,
+    platform     TEXT NOT NULL,
+    external_id  TEXT NOT NULL,
+    channel_id   TEXT,
+    stream_id    TEXT,
+    url          TEXT NOT NULL,
+    title        TEXT NOT NULL DEFAULT '',
+    published_at REAL,
+    duration     REAL,
+    signal       TEXT,
+    status       TEXT NOT NULL DEFAULT 'new'
+                 CHECK (status IN ('new', 'presorted', 'scoring', 'deferred', 'done', 'skipped', 'failed')),
+    error        TEXT,
+    created_at   REAL NOT NULL,
+    updated_at   REAL NOT NULL,
+    UNIQUE (bot_id, platform, external_id)
+);
+
+-- Fenêtres retenues par le tri bon marché : seules elles sont téléchargées,
+-- transcrites et envoyées à l'IA.
+CREATE TABLE IF NOT EXISTS candidate_window (
+    id            INTEGER PRIMARY KEY,
+    discovered_id INTEGER NOT NULL REFERENCES discovered(id) ON DELETE CASCADE,
+    start         REAL NOT NULL,
+    end           REAL NOT NULL,
+    signal_score  REAL NOT NULL DEFAULT 0,
+    media_path    TEXT,
+    words         TEXT,
+    status        TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'ready', 'scored', 'failed')),
+    error         TEXT,
+    UNIQUE (discovered_id, start, end)
+);
+
+-- Chat enregistré en direct (EventSub). Pas de pseudonymes : horodatage et texte.
+CREATE TABLE IF NOT EXISTS chat_message (
+    id         INTEGER PRIMARY KEY,
+    platform   TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    stream_id  TEXT,
+    ts         REAL NOT NULL,
+    text       TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS chat_by_stream ON chat_message (platform, stream_id, ts);
+
+CREATE TABLE IF NOT EXISTS chat_session (
+    platform   TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    stream_id  TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    ended_at   REAL,
+    PRIMARY KEY (platform, stream_id)
+);
+
+CREATE TABLE IF NOT EXISTS ai_usage (
+    bot_id        INTEGER NOT NULL REFERENCES bot(id) ON DELETE CASCADE,
+    day           TEXT NOT NULL,
+    provider      TEXT NOT NULL,
+    model         TEXT NOT NULL,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    calls         INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (bot_id, day, provider, model)
+);
+
+CREATE TABLE IF NOT EXISTS ai_cache (
+    key        TEXT PRIMARY KEY,
+    response   TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS alert (
+    id         INTEGER PRIMARY KEY,
+    bot_id     INTEGER REFERENCES bot(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    day        TEXT NOT NULL,
+    message    TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    seen       INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (bot_id, kind, day)
+);
+""",
+}
+
+
 def connect(path: str | Path) -> sqlite3.Connection:
     """Ouvre la base en mode autocommit ; les transactions passent par `tx`."""
     if str(path) != ":memory:":
@@ -142,9 +256,13 @@ def connect(path: str | Path) -> sqlite3.Connection:
 
 def init(conn: sqlite3.Connection) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    if version < SCHEMA_VERSION:
+    if version >= SCHEMA_VERSION:
+        return
+    if version == 0:
         conn.executescript(SCHEMA)
-        conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        version = 1
+    for target in range(version + 1, SCHEMA_VERSION + 1):
+        conn.executescript(f"BEGIN; {MIGRATIONS[target]} PRAGMA user_version={target}; COMMIT;")
 
 
 @contextmanager
