@@ -66,6 +66,14 @@ def run_app(home: Path | None = None, host: str = API_HOST, port: int = API_PORT
             print(f"erreur : {exc}", file=sys.stderr)
             return 1
 
+    try:  # nom de la fenêtre pour le dock : la relie à autoclip.desktop (icône)
+        from gi.repository import GLib
+
+        GLib.set_prgname("autoclip")
+        GLib.set_application_name("AutoClip")
+    except Exception:  # noqa: BLE001
+        pass
+
     bridge = JsBridge()
     bridge.window = webview.create_window("AutoClip", url, js_api=bridge, width=1320, height=860,
                                           min_size=(960, 620), background_color="#1f1e1d")
@@ -82,16 +90,27 @@ Type=Application
 Name=AutoClip
 Comment=Clipping et publication de Shorts
 Exec={exe} app
-Icon=video-x-generic
+Icon=autoclip
 Terminal=false
 Categories=AudioVideo;Video;
+StartupWMClass=autoclip
 """
 
 
 def install_desktop_entry() -> Path:
-    """Ajoute AutoClip au lanceur d'applications de l'utilisateur."""
+    """Ajoute AutoClip au lanceur d'applications de l'utilisateur, avec son icône."""
+    import shutil
+    import subprocess
+
     exe = Path(sys.argv[0]).resolve()
+    icon = Path.home() / ".local/share/icons/hicolor/scalable/apps/autoclip.svg"
+    icon.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(Path(__file__).parent / "assets" / "autoclip.svg", icon)
     target = Path.home() / ".local/share/applications/autoclip.desktop"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(DESKTOP_ENTRY.format(exe=exe))
+    for cmd in (["update-desktop-database", str(target.parent)],
+                ["gtk-update-icon-cache", "-q", "-t", str(icon.parents[3])]):
+        if shutil.which(cmd[0]):
+            subprocess.run(cmd, capture_output=True)  # facultatif : rafraîchit le lanceur
     return target

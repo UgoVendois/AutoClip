@@ -32,7 +32,7 @@ build-backend = "setuptools.build_meta"
 include = ["autoclip*"]
 
 [tool.setuptools.package-data]
-autoclip = ["web/**/*", "models/*"]
+autoclip = ["web/**/*", "models/*", "assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
