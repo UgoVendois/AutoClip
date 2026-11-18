@@ -46,7 +46,8 @@ def http_json(method: str, url: str, *, headers: dict[str, str], body: dict | No
 
 def _error_detail(exc: urllib.error.HTTPError) -> str:
     try:
-        raw = exc.read().decode(errors="replace")
+        with exc:
+            raw = exc.read().decode(errors="replace")
     except Exception:  # noqa: BLE001
         return exc.reason or ""
     try:

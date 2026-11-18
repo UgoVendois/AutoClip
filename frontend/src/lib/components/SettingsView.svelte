@@ -162,8 +162,35 @@
   async function saveCreds(platform) {
     if (await run(api.put(`/credentials/${platform}`, forms[platform]), `Clés ${PLATFORMS[platform].name} enregistrées dans le trousseau`)) {
       await loadCreds();
+      testCreds(platform);
     }
   }
+
+  // Résultat du dernier test par plateforme : { state: running | ok | bad | unknown, message }.
+  let checks = $state({});
+
+  async function testCreds(platform) {
+    checks[platform] = { state: 'running', message: 'Test en cours…' };
+    try {
+      const res = await api.post(`/credentials/${platform}/test`);
+      checks[platform] = { state: res.ok ? 'ok' : res.conclusive ? 'bad' : 'unknown', message: res.message };
+    } catch (err) {
+      checks[platform] = { state: 'unknown', message: err.message };
+    }
+  }
+
+  async function testAll() {
+    await Promise.all(Object.keys(creds.configured).filter((p) => creds.configured[p]).map(testCreds));
+    const bad = Object.values(checks).filter((c) => c.state === 'bad').length;
+    toast(bad ? `${bad} clé${bad > 1 ? 's' : ''} refusée${bad > 1 ? 's' : ''}` : 'Tests terminés', bad ? 'error' : 'success');
+  }
+
+  const CHECK_BADGE = {
+    running: { cls: 'badge', label: 'Test…' },
+    ok: { cls: 'badge badge-success', label: 'Valide', icon: 'check' },
+    bad: { cls: 'badge badge-danger', label: 'Invalide', icon: 'x' },
+    unknown: { cls: 'badge badge-warning', label: 'Non vérifiée', icon: 'alert' },
+  };
 
   async function deleteCreds(platform) {
     const ok = await askConfirm({
@@ -172,7 +199,10 @@
       confirmLabel: 'Supprimer',
       danger: true,
     });
-    if (ok && (await run(api.del(`/credentials/${platform}`), 'Clés supprimées'))) await loadCreds();
+    if (ok && (await run(api.del(`/credentials/${platform}`), 'Clés supprimées'))) {
+      delete checks[platform];
+      await loadCreds();
+    }
   }
 
   async function importClientSecret(text) {
@@ -183,7 +213,10 @@
       toast("Ce fichier n'est pas un JSON valide.", 'error');
       return;
     }
-    if (await run(api.put('/credentials/youtube', data), 'client_secret.json importé dans le trousseau')) await loadCreds();
+    if (await run(api.put('/credentials/youtube', data), 'client_secret.json importé dans le trousseau')) {
+      await loadCreds();
+      testCreds('youtube');
+    }
   }
 
   async function pickClientSecret() {
@@ -306,6 +339,13 @@
     {/if}
 
     <Section title="Clés d'API" icon="key" description="Stockées dans le trousseau système (libsecret), jamais en clair. Elles ne sont jamais réaffichées ici.">
+      {#snippet actions()}
+        {#if creds && Object.values(creds.configured).some(Boolean)}
+          <button class="btn btn-sm" disabled={Object.values(checks).some((c) => c.state === 'running')} onclick={testAll}>
+            <Icon name="refresh" size={14} /> Tout tester
+          </button>
+        {/if}
+      {/snippet}
       {#if creds}
         <div class="space-y-7">
         {#each GROUPS as group (group.id)}
@@ -323,15 +363,30 @@
           {#each group.platforms.filter((p) => creds.fields[p]) as platform (platform)}
             {@const fields = creds.fields[platform]}
             {@const configured = creds.configured[platform]}
+            {@const check = checks[platform]}
             <details class="group rounded-xl border border-line" open={platform === 'youtube' && !configured}>
               <summary class="flex cursor-pointer list-none items-center gap-3 px-4 py-3">
                 <span class="font-medium">{PLATFORMS[platform]?.name ?? platform}</span>
-                {#if configured}
+                {#if configured && check}
+                  {@const b = CHECK_BADGE[check.state]}
+                  <span class={b.cls} title={check.message}>
+                    {#if check.state === 'running'}<span class="spinner size-2.5"></span>{:else}<Icon name={b.icon} size={11} />{/if}
+                    {b.label}
+                  </span>
+                {:else if configured}
                   <span class="badge badge-success"><Icon name="check" size={11} /> Configurée</span>
                 {:else}
                   <span class="badge">Non configurée</span>
                 {/if}
-                <Icon name="plus" size={14} class="ml-auto text-faint transition-transform group-open:rotate-45" />
+                {#if configured}
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-ghost ml-auto"
+                    disabled={check?.state === 'running'}
+                    onclick={(e) => { e.preventDefault(); e.stopPropagation(); testCreds(platform); }}
+                  ><Icon name="refresh" size={13} /> Tester</button>
+                {/if}
+                <Icon name="plus" size={14} class="{configured ? '' : 'ml-auto'} text-faint transition-transform group-open:rotate-45" />
               </summary>
               <div class="border-t border-line px-4 pb-4 pt-3">
                 <p class="mb-3 text-sm text-muted">
@@ -345,6 +400,12 @@
                     >{PLATFORMS[platform].urlLabel}<Icon name="external" size={12} /></a>
                   {/if}
                 </p>
+                {#if configured && check && check.state !== 'running'}
+                  <p class="mb-3 flex items-start gap-2 rounded-lg px-3 py-2 text-sm
+                    {check.state === 'ok' ? 'bg-[var(--success-soft)] text-success' : check.state === 'bad' ? 'bg-[var(--danger-soft)] text-danger' : 'bg-[var(--warning-soft)] text-warning'}">
+                    <Icon name={CHECK_BADGE[check.state].icon} size={14} class="mt-0.5 shrink-0" />{check.message}
+                  </p>
+                {/if}
                 {#if forms[platform]}
                   <form class="grid gap-3 md:grid-cols-2" onsubmit={(e) => { e.preventDefault(); saveCreds(platform); }}>
                     {#each fields as field}

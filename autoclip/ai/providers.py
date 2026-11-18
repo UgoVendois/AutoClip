@@ -80,7 +80,13 @@ class AnthropicProvider(AIProvider):
         return response.parsed_output, usage
 
     def list_models(self) -> list[str]:
-        return [m.id for m in self.client.models.list(limit=100)]
+        a = self._anthropic
+        try:
+            return [m.id for m in self.client.models.list(limit=100)]
+        except (a.AuthenticationError, a.PermissionDeniedError) as exc:
+            raise AIProviderError(f"Anthropic : clé refusée ({exc.status_code})") from exc
+        except a.APIError as exc:  # réseau, surcharge
+            raise RuntimeError(f"Anthropic : {exc}") from exc
 
 
 class OllamaProvider(AIProvider):

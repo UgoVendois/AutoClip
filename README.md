@@ -71,6 +71,10 @@ autoclip alerts
 
 Fournisseurs : `anthropic` (Claude, `claude-opus-5-5` par défaut, réglable avec `model=`), `gemini`, `openai`, `mistral` (clés à enregistrer dans Paramètres > Clés d'API), `ollama` (local), `fake` (tests). Un bot en dry run utilise toujours le faux fournisseur : aucun appel payant.
 
+## Vérifier les clés d'API
+
+Paramètres > Clés d'API : bouton **Tester** sur chaque clé (et **Tout tester**), lancé aussi à l'enregistrement. Chaque test est un appel gratuit et sans effet : liste des modèles (IA), jeton d'application (Twitch, TikTok, Meta), échange OAuth volontairement invalide qui distingue un identifiant faux d'un bon (YouTube), lecture à 1 unité de quota (YouTube Data). En ligne de commande : `autoclip credentials test [PLATEFORME]`.
+
 ## Agent identité de chaîne
 
 Onglet **Chaîne** d'un bot : l'IA propose 3 noms, une accroche, une description, des mots-clés, une palette, une photo de profil (800×800), une bannière (2560×1440, texte dans la zone visible sur mobile) et des playlists. Tout est modifiable avant d'appliquer.

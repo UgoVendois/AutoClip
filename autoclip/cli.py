@@ -161,6 +161,17 @@ def cmd_credentials(args) -> int:
         print(f"clés {args.platform} enregistrées dans le trousseau")
     elif args.action == "delete":
         secrets.delete(secrets.credentials_key(args.platform))
+    elif args.action == "test":
+        from . import keycheck
+
+        platforms = [args.platform] if args.platform else [
+            p for p, ok in secrets.credentials_status().items() if ok]
+        failed = 0
+        for platform in platforms:
+            result = keycheck.check(platform)
+            failed += not result.ok
+            print(f"{platform:<13} {'OK ' if result.ok else 'ÉCHEC'}  {result.message}")
+        return 1 if failed else 0
     return 0
 
 
@@ -371,6 +382,8 @@ def build_parser() -> argparse.ArgumentParser:
     cs.add_argument("file", nargs="?", help="youtube : chemin du client_secret.json")
     cd = cr.add_parser("delete")
     cd.add_argument("platform", choices=list(secrets.CREDENTIAL_FIELDS))
+    ct = cr.add_parser("test", help="vérifie les clés auprès de chaque plateforme")
+    ct.add_argument("platform", nargs="?", choices=list(secrets.CREDENTIAL_FIELDS))
     for parser in cr.choices.values():
         parser.set_defaults(func=cmd_credentials)
 

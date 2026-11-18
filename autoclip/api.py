@@ -399,6 +399,17 @@ def create_app(home: Path) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         return {"ok": True}
 
+    @api.post("/credentials/{platform}/test")
+    async def test_credentials(platform: str):
+        """Appel gratuit à la plateforme pour vérifier la clé enregistrée."""
+        from . import keycheck
+
+        try:
+            result = await run_in_threadpool(keycheck.check, platform)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return result.to_dict()
+
     @api.delete("/credentials/{platform}")
     def delete_credentials(platform: str):
         secrets.delete(secrets.credentials_key(platform))
