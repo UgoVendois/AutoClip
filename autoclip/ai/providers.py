@@ -74,6 +74,10 @@ class AnthropicProvider(AIProvider):
                 **self._params(system, user, self.model, images),
             )
         except (a.AuthenticationError, a.PermissionDeniedError, a.NotFoundError, a.BadRequestError) as exc:
+            if "credit balance" in str(exc).lower():
+                raise AIProviderError(
+                    "Anthropic : plus de crédits API. L'abonnement Claude (Pro, Max) ne couvre pas l'API : "
+                    "ajoute des crédits sur platform.claude.com > Billing, ou choisis un autre fournisseur.") from exc
             raise AIProviderError(f"Anthropic : {exc}") from exc
         # RateLimitError, 5xx et erreurs réseau remontent : la file de jobs réessaiera.
         u = response.usage

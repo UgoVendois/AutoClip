@@ -130,6 +130,20 @@ class TestScout(unittest.TestCase):
         self.assertEqual(scout.enqueue_due_scouts(self.conn, self.queue, now + 3600), 0)  # 24 h par défaut
         self.assertEqual(scout.enqueue_due_scouts(self.conn, self.queue, now + 25 * 3600), 1)
 
+    def test_ai_out_of_credits_still_finds_channels(self):
+        from autoclip.ai.base import AIProviderError
+
+        class Broke(FakeProvider):
+            def complete_json(self, *a, **k):
+                raise AIProviderError("Anthropic : plus de crédits API.")
+
+        self.ctx.ai_override = Broke()
+        self.run_scout()
+        run = self.conn.execute("SELECT * FROM scout_run").fetchone()
+        self.assertEqual(run["status"], "done")
+        self.assertIn("crédits", run["error"])
+        self.assertEqual(len(self.ai_watches()), 3)
+
     def test_theme_is_required(self):
         with self.assertRaises(services.ServiceError):
             services.update_bot(self.conn, self.bot, ai_settings={"scout_theme": " "})

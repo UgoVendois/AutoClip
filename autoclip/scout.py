@@ -20,7 +20,7 @@ import time
 from pydantic import BaseModel, Field
 
 from . import services
-from .ai.base import AIProvider
+from .ai.base import AIProvider, AIProviderError
 from .ai.budget import record_usage, today, used_tokens
 from .db import tx
 from .discovery import ChannelCandidate, get_discoverer
@@ -147,13 +147,17 @@ def _scout(ctx, bot: sqlite3.Row, ai: dict, theme: str, language: str, run_id: i
         "SELECT platform, channel FROM watch WHERE bot_id = ?", (bot["id"],))}
 
     provider = _provider(ctx, bot, ai)
+    errors = []
+    plan = ScoutPlan(twitch_categories=[theme], keywords=[theme], youtube_queries=[theme])
     if provider is not None:
-        plan = _ask(ctx, provider, bot["id"], PLAN_PROMPT, {"theme": theme, "language": language}, ScoutPlan)
-    else:
-        plan = ScoutPlan(twitch_categories=[theme], keywords=[theme], youtube_queries=[theme])
+        try:
+            plan = _ask(ctx, provider, bot["id"], PLAN_PROMPT, {"theme": theme, "language": language}, ScoutPlan)
+        except AIProviderError as exc:
+            # IA indisponible (crédits, clé) : on cherche quand même, sélection par audience.
+            errors.append(f"{exc} Sélection faite sans IA, par audience.")
+            provider = None
 
     candidates: list[ChannelCandidate] = []
-    errors = []
     for platform in ai["scout_platforms"]:
         try:
             disc = get_discoverer(platform)
@@ -171,14 +175,18 @@ def _scout(ctx, bot: sqlite3.Row, ai: dict, theme: str, language: str, run_id: i
     added = []
     if room > 0 and candidates:
         by_key = {(c.platform, c.channel_id): c for c in candidates}
+        chosen = None
         if provider is not None:
-            pick = _ask(ctx, provider, bot["id"], PICK_PROMPT, {
-                "theme": theme, "language": language, "max": room,
-                "candidates": [c.brief() for c in candidates[:80]]}, ScoutPick)
-            chosen = [(by_key[(p.platform, p.channel_id)], p.score, p.reason)
-                      for p in sorted(pick.channels, key=lambda p: -p.score)
-                      if (p.platform, p.channel_id) in by_key]
-        else:
+            try:
+                pick = _ask(ctx, provider, bot["id"], PICK_PROMPT, {
+                    "theme": theme, "language": language, "max": room,
+                    "candidates": [c.brief() for c in candidates[:80]]}, ScoutPick)
+                chosen = [(by_key[(p.platform, p.channel_id)], p.score, p.reason)
+                          for p in sorted(pick.channels, key=lambda p: -p.score)
+                          if (p.platform, p.channel_id) in by_key]
+            except AIProviderError as exc:
+                errors.append(f"{exc} Sélection faite sans IA, par audience.")
+        if chosen is None:
             chosen = [(c, None, f"{c.viewers} spectateurs · {c.title[:80]}")
                       for c in sorted(candidates, key=lambda c: -c.viewers)]
         now = ctx.clock()
