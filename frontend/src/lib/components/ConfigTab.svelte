@@ -32,7 +32,18 @@
     subtitle_words: s.subtitle_words,
     font_size: s.font_size,
     tags: (s.tags ?? []).join(', '),
+    layout: s.layout ?? 'auto',
+    trim_silences: s.trim_silences ?? true,
+    hook_text: s.hook_text ?? true,
+    hook_seconds: s.hook_seconds ?? 3,
   });
+
+  const LAYOUTS = [
+    { value: 'auto', label: 'Automatique', hint: 'Facecam en haut si une webcam est détectée, sinon jeu entier sur fond flouté.' },
+    { value: 'facecam', label: 'Facecam + jeu', hint: 'Webcam du streamer en haut, jeu en dessous (repli sur fond flouté sans webcam).' },
+    { value: 'fit', label: 'Fond flouté', hint: "L'image entière au centre, rien n'est rogné : idéal pour le gameplay." },
+    { value: 'crop', label: 'Recadrage central', hint: 'Pour une personne filmée en plein cadre (podcast, IRL).' },
+  ];
   const sc = initial.schedule;
   let schedule = $state({
     every_hours: sc?.every_hours ?? 4,
@@ -107,7 +118,7 @@
       ...clip,
       tags: clip.tags.split(',').map((t) => t.trim()).filter(Boolean),
     };
-    for (const k of ['min_seconds', 'max_seconds', 'max_clips', 'subtitle_words', 'font_size']) {
+    for (const k of ['min_seconds', 'max_seconds', 'max_clips', 'subtitle_words', 'font_size', 'hook_seconds']) {
       body[k] = Number(body[k]);
     }
     if (await run(api.patch(`/bots/${bot.id}`, { clip_settings: body }), 'Paramètres de découpage enregistrés')) reload();
@@ -231,7 +242,47 @@
         <input id="tags" class="input" placeholder="podcast, humour" bind:value={clip.tags} />
       </div>
     </div>
-    <p class="hint">Les extraits commencent et finissent sur une fin de phrase. Les changements s'appliquent aux prochaines vidéos.</p>
+
+    <div class="mt-6 border-t border-line pt-5">
+      <p class="label">Mise en page verticale</p>
+      <div class="grid gap-2 sm:grid-cols-2">
+        {#each LAYOUTS as l}
+          <button
+            class="rounded-xl border px-4 py-3 text-left transition-colors {clip.layout === l.value ? 'border-accent bg-accent-soft' : 'border-line hover:bg-surface-2'}"
+            onclick={() => (clip.layout = l.value)}
+          >
+            <span class="block font-medium">{l.label}</span>
+            <span class="mt-0.5 block text-xs text-muted">{l.hint}</span>
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="mt-5 grid gap-4 md:grid-cols-2">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <p class="label mb-0">Couper les silences</p>
+          <p class="hint mt-1">Retire les passages sans voix ni son de jeu (plus de 0,7 s) pour garder le rythme.</p>
+        </div>
+        <button class="switch mt-1" role="switch" aria-checked={clip.trim_silences} aria-label="Couper les silences"
+          onclick={() => (clip.trim_silences = !clip.trim_silences)}></button>
+      </div>
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <p class="label mb-0">Texte d'accroche</p>
+          <p class="hint mt-1">Une phrase écrite par l'IA, affichée au début du clip pour retenir le spectateur.</p>
+          {#if clip.hook_text}
+            <div class="mt-2 flex items-center gap-2">
+              <input id="hook-s" class="input w-20" type="number" min="1" max="10" step="0.5" bind:value={clip.hook_seconds} />
+              <label for="hook-s" class="text-sm text-muted">secondes</label>
+            </div>
+          {/if}
+        </div>
+        <button class="switch mt-1" role="switch" aria-checked={clip.hook_text} aria-label="Texte d'accroche"
+          onclick={() => (clip.hook_text = !clip.hook_text)}></button>
+      </div>
+    </div>
+    <p class="hint mt-4">Avec un pic de chat, l'extrait démarre juste avant l'action ; sinon il commence et finit sur une fin de phrase. Les changements s'appliquent aux prochains rendus.</p>
     <div class="mt-5 flex justify-end">
       <button class="btn btn-primary" onclick={saveClip}><Icon name="check" /> Enregistrer</button>
     </div>

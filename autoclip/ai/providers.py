@@ -3,6 +3,7 @@ Ollama (local) et un faux pour les tests."""
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import urllib.error
@@ -40,30 +41,37 @@ class AnthropicProvider(AIProvider):
         self.client = anthropic.Anthropic(api_key=api_key("anthropic"), max_retries=3)
 
     @staticmethod
-    def _params(system: str, user: str, model: str) -> dict:
+    def _params(system: str, user: str, model: str, images: list[tuple[str, bytes]] | None = None) -> dict:
+        content: list[dict] = [{"type": "text", "text": user}]
+        for label, data in images or []:
+            if label:
+                content.append({"type": "text", "text": label})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                        "data": base64.b64encode(data).decode()}})
         return {
             "model": model,
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            "messages": [{"role": "user", "content": user}],
+            "messages": [{"role": "user", "content": content}],
         }
 
     def estimate_tokens(self, request: ScoringRequest) -> int:
         try:
             counted = self.client.messages.count_tokens(
-                **self._params(SYSTEM_PROMPT, request.user_content(), self.model)).input_tokens
+                **self._params(SYSTEM_PROMPT, request.user_content(), self.model,
+                               request.image_list())).input_tokens
         except self._anthropic.APIError:
-            counted = rough_token_count(SYSTEM_PROMPT + request.user_content())
+            return super().estimate_tokens(request)
         return counted + self.output_tokens_per_segment * len(request.segments)
 
     def complete_json(self, system: str, user: str, schema: type[T], *,
-                      max_tokens: int = 4000) -> tuple[T, Usage]:
+                      max_tokens: int = 4000, images: list[tuple[str, bytes]] | None = None) -> tuple[T, Usage]:
         a = self._anthropic
         try:
             response = self.client.messages.parse(
                 max_tokens=max_tokens,
                 output_format=schema,
                 output_config={"effort": self.effort},
-                **self._params(system, user, self.model),
+                **self._params(system, user, self.model, images),
             )
         except (a.AuthenticationError, a.PermissionDeniedError, a.NotFoundError, a.BadRequestError) as exc:
             raise AIProviderError(f"Anthropic : {exc}") from exc
@@ -94,13 +102,14 @@ class OllamaProvider(AIProvider):
     par le schéma JSON. Gratuit, mais lent sur CPU."""
 
     name = "ollama"
+    supports_images = False  # la plupart des modèles locaux légers ne lisent pas les images
 
     def __init__(self, model: str | None = None, url: str = "http://127.0.0.1:11434") -> None:
         self.model = model or DEFAULT_MODELS["ollama"]
         self.url = url
 
     def complete_json(self, system: str, user: str, schema: type[T], *,
-                      max_tokens: int = 4000) -> tuple[T, Usage]:
+                      max_tokens: int = 4000, images: list[tuple[str, bytes]] | None = None) -> tuple[T, Usage]:
         body = {
             "model": self.model,
             "stream": False,
@@ -146,9 +155,11 @@ class FakeProvider(AIProvider):
         self.model = model or DEFAULT_MODELS["fake"]
         self.calls: list[ScoringRequest] = []
         self.json_calls: list[tuple[str, str, type]] = []
+        self.images_seen = 0
 
     def score(self, request: ScoringRequest) -> tuple[ScoringResult, Usage]:
         self.calls.append(request)
+        self.images_seen += len(request.image_list())
         results = []
         for seg in request.segments:
             jitter = int(hashlib.sha256(seg.id.encode()).hexdigest()[:2], 16) % 10
@@ -159,13 +170,14 @@ class FakeProvider(AIProvider):
                 reason=f"[simulé] pic de {seg.signal} d'intensité {seg.signal_score:.1f}",
                 title=" ".join(words[:8])[:70] or "Extrait",
                 description=" ".join(words[:25]),
+                hook=" ".join(words[:5])[:40] or "Regarde bien la fin",
             ))
         output = ScoringResult(segments=results)
         return output, Usage(rough_token_count(SYSTEM_PROMPT + request.user_content()),
                              rough_token_count(output.model_dump_json()))
 
     def complete_json(self, system: str, user: str, schema: type[T], *,
-                      max_tokens: int = 4000) -> tuple[T, Usage]:
+                      max_tokens: int = 4000, images: list[tuple[str, bytes]] | None = None) -> tuple[T, Usage]:
         """Les schémas qui veulent un faux résultat exposent `fake(user)`."""
         self.json_calls.append((system, user, schema))
         fake = getattr(schema, "fake", None)

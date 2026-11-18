@@ -256,6 +256,13 @@ class TestTwitchVodEndToEnd(DiscoveryHarness):
             self.assertTrue(any(s0 <= seg.start and seg.end <= s1 for s0, s1 in self.twitch.sections), seg)
             self.assertTrue(any(b - 40 <= seg.start and seg.end <= b + 40 for b in BURSTS), seg)
             self.assertEqual(seg.signal, "chat")
+        # Un extrait par fenêtre démarre juste avant le moment fort (pic du chat moins son retard).
+        hooks = [seg for seg in segments if seg.id.endswith("h")]
+        self.assertEqual(len(hooks), 3)
+        for seg in hooks:
+            self.assertTrue(any(b - 15 <= seg.start <= b for b in BURSTS), seg)  # démarre avant la rafale
+        # L'IA reçoit aussi des images clés.
+        self.assertEqual(self.provider.images_seen, 2 * len(segments))
 
         # Les clips attendent la validation, avec score et raison.
         clips = services.list_clips(self.conn, bot_id=self.bot_id)
@@ -265,6 +272,7 @@ class TestTwitchVodEndToEnd(DiscoveryHarness):
             self.assertEqual(c["origin"], "ai")
             self.assertGreaterEqual(c["score"], 50)
             self.assertIn("pic de chat", c["reason"])
+            self.assertTrue(c["hook"])
             self.assertTrue(Path(c["file_path"]).is_file())
         self.assertEqual(self.conn.execute("SELECT status FROM discovered").fetchone()[0], "done")
 

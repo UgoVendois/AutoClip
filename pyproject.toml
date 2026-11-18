@@ -15,6 +15,7 @@ dependencies = [
     "pywebview>=5.0",
     "anthropic>=2.10",
     "websockets>=13",
+    "opencv-python-headless>=4.8",  # détection de la facecam (modèle YuNet fourni)
 ]
 
 [project.optional-dependencies]
@@ -31,7 +32,7 @@ build-backend = "setuptools.build_meta"
 include = ["autoclip*"]
 
 [tool.setuptools.package-data]
-autoclip = ["web/**/*"]
+autoclip = ["web/**/*", "models/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

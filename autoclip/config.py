@@ -54,6 +54,12 @@ DEFAULT_CLIP_SETTINGS: dict[str, object] = {
     "font_size": 84,
     "font": "DejaVu Sans",
     "tags": [],
+    # Mise en page 9:16 : auto (facecam en haut si un visage fixe est détecté, sinon
+    # jeu entier sur fond flouté) | facecam | fit (fond flouté) | crop (recadrage central).
+    "layout": "auto",
+    "trim_silences": True,  # coupe les silences (ni parole ni son) de plus de 0,7 s
+    "hook_text": True,  # texte d'accroche incrusté au début du clip
+    "hook_seconds": 3.0,
 }
 
 # Découverte automatique et IA, propres à chaque bot (colonne `bot.ai_settings`).
@@ -68,6 +74,8 @@ DEFAULT_AI_SETTINGS: dict[str, object] = {
     "min_score": 60,  # score IA minimal (0-100) pour proposer un clip
     "clips_per_video": 3,
     "backfill_hours": 48,  # à l'ajout d'une chaîne : contenus récents à reprendre
+    "vision": True,  # images clés envoyées à l'IA (action à l'écran, pas seulement la parole)
+    "chat_delay_seconds": 8,  # retard du chat sur l'action (latence du live + temps de réaction)
 }
 
 API_HOST = "127.0.0.1"

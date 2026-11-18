@@ -56,6 +56,10 @@ class IdentityIn(BaseModel):
     brief: str = ""
 
 
+class HookIn(BaseModel):
+    hook: str
+
+
 class ApproveIn(BaseModel):
     title: str | None = None
     description: str | None = None
@@ -369,6 +373,11 @@ def create_app(home: Path) -> FastAPI:
             params.append(status)
         rows = _rows(conn.execute(query + " ORDER BY id DESC LIMIT ?", (*params, limit)))
         return {"stats": JobQueue(conn).stats(), "jobs": rows}
+
+    @api.put("/clips/{clip_id}/hook")
+    def put_hook(clip_id: int, body: HookIn, conn=Depends(get_conn)):
+        guard(services.set_hook, conn, JobQueue(conn), clip_id, body.hook)
+        return {"ok": True}
 
     @api.post("/jobs/{job_id}/retry")
     def retry(job_id: int, conn=Depends(get_conn)):

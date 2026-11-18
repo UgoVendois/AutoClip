@@ -54,6 +54,8 @@ class Candidate:
 
     @property
     def title(self) -> str:
+        if not self.sentences:
+            return ""
         first = self.sentences[0].text
         title = first if len(first) <= 90 else first[:87].rsplit(" ", 1)[0] + "…"
         return title
@@ -114,3 +116,41 @@ def find_clips(words: list[dict], *, min_seconds: float = 20, max_seconds: float
         if all(cand.end <= c.start or cand.start >= c.end for c in chosen):
             chosen.append(cand)
     return sorted(chosen, key=lambda c: c.start)
+
+
+def hook_clip(words: list[dict], anchor: float, *, window: tuple[float, float],
+              min_seconds: float = 20, max_seconds: float = 60, pre_roll: float = 4.0,
+              after: float = 6.0) -> Candidate | None:
+    """Extrait qui démarre juste avant le moment fort (`anchor`) au lieu d'un début
+    de phrase lointain : sur Shorts, il faut de l'action dans les 2 premières secondes.
+
+    Fonctionne sans parole (jeu vidéo) : les mots servent seulement à ne pas
+    couper au milieu d'un mot et à finir sur une fin de phrase quand c'est possible.
+    """
+    lo, hi = window
+    if hi - lo < min_seconds:
+        return None
+    start = max(lo, anchor - pre_roll)
+    for w in words:  # ne pas démarrer au milieu d'un mot
+        if w["start"] < start < w["end"]:
+            start = w["start"] if start - w["start"] < 0.6 else w["end"]
+            break
+    start = max(lo, min(start, hi - min_seconds))
+    earliest = max(start + min_seconds, anchor + after)
+    latest = min(hi, start + max_seconds)
+    if earliest > latest:
+        earliest = latest
+    end = None
+    for s in split_sentences([w for w in words if w["start"] >= start]):
+        if earliest <= s.end <= latest:
+            end = s.end  # première fin de phrase après le moment fort
+            break
+    if end is None:
+        end = earliest
+        for w in words:  # pas de coupe au milieu d'un mot
+            if w["start"] < end < w["end"] and w["end"] <= latest:
+                end = w["end"]
+                break
+    inside = [w for w in words if w["start"] >= start and w["end"] <= end]
+    sentences = split_sentences(inside)
+    return Candidate(round(start, 2), round(end, 2), score(sentences) if sentences else 0.0, sentences)

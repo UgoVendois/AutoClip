@@ -7,6 +7,7 @@ défaut, l'interface propose la liste renvoyée par chaque API (`list_models`).
 
 from __future__ import annotations
 
+import base64
 import json
 import urllib.error
 import urllib.request
@@ -83,10 +84,15 @@ class GeminiProvider(AIProvider):
         return {"x-goog-api-key": self.key}
 
     def complete_json(self, system: str, user: str, schema: type[T], *,
-                      max_tokens: int = 4000) -> tuple[T, Usage]:
+                      max_tokens: int = 4000, images: list[tuple[str, bytes]] | None = None) -> tuple[T, Usage]:
+        parts: list[dict] = [{"text": user}]
+        for label, data in images or []:
+            if label:
+                parts.append({"text": label})
+            parts.append({"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(data).decode()}})
         body = {
             "systemInstruction": {"parts": [{"text": system}]},
-            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {
                 "responseMimeType": "application/json",
                 "responseJsonSchema": json_schema(schema),
@@ -138,11 +144,22 @@ class _ChatCompletionsProvider(AIProvider):
     def _token_limit(self, max_tokens: int) -> dict:
         return {"max_tokens": max_tokens}
 
+    @staticmethod
+    def _image_part(data_uri: str) -> dict:
+        return {"type": "image_url", "image_url": {"url": data_uri}}
+
     def complete_json(self, system: str, user: str, schema: type[T], *,
-                      max_tokens: int = 4000) -> tuple[T, Usage]:
+                      max_tokens: int = 4000, images: list[tuple[str, bytes]] | None = None) -> tuple[T, Usage]:
+        content: str | list[dict] = user
+        if images:
+            content = [{"type": "text", "text": user}]
+            for label, data in images:
+                if label:
+                    content.append({"type": "text", "text": label})
+                content.append(self._image_part(f"data:image/jpeg;base64,{base64.b64encode(data).decode()}"))
         body = {
             "model": self.model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
             "response_format": {"type": "json_schema", "json_schema": {
                 "name": schema.__name__,
                 "schema": json_schema(schema, strict=self.strict_schema),
@@ -189,3 +206,7 @@ class MistralProvider(_ChatCompletionsProvider):
     name = "mistral"
     label = "Mistral"
     base_url = "https://api.mistral.ai/v1"
+
+    @staticmethod
+    def _image_part(data_uri: str) -> dict:
+        return {"type": "image_url", "image_url": data_uri}  # format Mistral : URL en chaîne

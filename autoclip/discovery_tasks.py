@@ -134,8 +134,9 @@ def run_presort(ctx, payload: dict) -> dict:
                                      (row["bot_id"], row["url"])).fetchone()["id"]
         for w in windows:
             ctx.conn.execute(
-                "INSERT OR IGNORE INTO candidate_window (discovered_id, start, end, signal_score) VALUES (?, ?, ?, ?)",
-                (row["id"], round(w.start, 2), round(w.end, 2), w.score))
+                "INSERT OR IGNORE INTO candidate_window (discovered_id, start, end, signal_score, peak) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (row["id"], round(w.start, 2), round(w.end, 2), w.score, round(w.peak, 2)))
         _set(ctx, "discovered", row["id"], status="presorted", signal=kind, source_id=source_id,
              duration=duration, updated_at=ctx.clock())
         for w in ctx.conn.execute("SELECT id FROM candidate_window WHERE discovered_id = ?", (row["id"],)):
@@ -202,14 +203,28 @@ def run_ai_score(ctx, payload: dict) -> dict:
     windows = {w["id"]: w for w in ctx.conn.execute(
         "SELECT * FROM candidate_window WHERE discovered_id = ? AND status = 'ready'", (row["id"],))}
 
-    # Découpage sur fins de phrase à l'intérieur de chaque fenêtre.
+    # Candidats par fenêtre : un extrait qui démarre juste avant le moment fort
+    # (pic du chat moins son retard), plus des découpes sur fins de phrase.
     segments: dict[str, tuple[Segment, sqlite3.Row, analyze.Candidate]] = {}
+    anchors: dict[str, float] = {}
+    signal = row["signal"] or "chat"
     for w in windows.values():
-        cands = analyze.find_clips(json.loads(w["words"]), min_seconds=clip_cfg["min_seconds"],
-                                   max_seconds=clip_cfg["max_seconds"], max_clips=2)
-        for i, c in enumerate(cands):
-            seg = Segment(id=f"w{w['id']}c{i}", start=round(c.start, 2), end=round(c.end, 2), text=c.text,
-                          signal=row["signal"] or "chat", signal_score=w["signal_score"])
+        words = json.loads(w["words"])
+        cands: list[tuple[str, analyze.Candidate]] = []
+        if w["peak"] is not None:
+            delay = ai["chat_delay_seconds"] if signal == "chat" else 0
+            anchor = max(w["start"], w["peak"] - delay)
+            hook = analyze.hook_clip(words, anchor, window=(w["start"], w["end"]),
+                                     min_seconds=clip_cfg["min_seconds"], max_seconds=clip_cfg["max_seconds"])
+            if hook is not None:
+                cands.append(("h", hook))
+                anchors[f"w{w['id']}h"] = anchor
+        for i, c in enumerate(analyze.find_clips(words, min_seconds=clip_cfg["min_seconds"],
+                                                 max_seconds=clip_cfg["max_seconds"], max_clips=1)):
+            cands.append((f"c{i}", c))
+        for suffix, c in cands:
+            seg = Segment(id=f"w{w['id']}{suffix}", start=round(c.start, 2), end=round(c.end, 2), text=c.text,
+                          signal=signal, signal_score=w["signal_score"])
             segments[seg.id] = (seg, w, c)
     if not segments:
         with tx(ctx.conn):
@@ -221,14 +236,16 @@ def run_ai_score(ctx, payload: dict) -> dict:
     provider = ctx.ai_override or make_provider(ai, dry_run=bool(bot["dry_run"]) or ctx.force_dry_run)
     if provider is None:
         scores = {s.id: SegmentScore(id=s.id, score=min(100, int(50 + 10 * s.signal_score)),
-                                     reason=f"pic de {s.signal} (sans IA)", title=c.title,
-                                     description=c.text[:300])
+                                     reason=f"pic de {s.signal} (sans IA)", title=c.title or row["title"][:70],
+                                     description=c.text[:300], hook="")
                   for s, _, c in segments.values()}
         origin, tokens = "signal", 0
     else:
         from .ai.base import ScoringRequest
 
-        request = ScoringRequest(video_title=row["title"], channel=row["channel_id"] or "", segments=request_segments)
+        images = (segment_images(segments, anchors) if ai["vision"] and provider.supports_images else {})
+        request = ScoringRequest(video_title=row["title"], channel=row["channel_id"] or "",
+                                 segments=request_segments, images=images)
         outcome = score_with_budget(ctx.conn, provider, request, bot_id=bot["id"],
                                     daily_budget=ai["daily_token_budget"], now=ctx.clock())
         if outcome.scores is None:
@@ -253,11 +270,11 @@ def run_ai_score(ctx, payload: dict) -> dict:
             words = [wd for wd in json.loads(w["words"]) if wd["end"] > seg.start and wd["start"] < seg.end]
             cur = ctx.conn.execute(
                 """INSERT OR IGNORE INTO clip (bot_id, source_id, start_ms, end_ms, score, title, description,
-                       words, reason, origin, media_path, media_offset_ms, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       words, reason, origin, media_path, media_offset_ms, hook, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (bot["id"], row["source_id"], int(seg.start * 1000), int(seg.end * 1000), sc.score,
-                 sc.title or seg.text[:70], sc.description, json.dumps(words), sc.reason, origin,
-                 w["media_path"], int(w["start"] * 1000), now, now))
+                 sc.title or seg.text[:70] or row["title"][:70], sc.description, json.dumps(words), sc.reason,
+                 origin, w["media_path"], int(w["start"] * 1000), sc.hook.strip()[:60], now, now))
             if cur.rowcount:
                 ctx.queue.enqueue("render", {"clip_id": cur.lastrowid}, key=f"render:{cur.lastrowid}")
         ctx.conn.execute("UPDATE candidate_window SET status = 'scored' WHERE discovered_id = ? AND status = 'ready'",
@@ -266,6 +283,30 @@ def run_ai_score(ctx, payload: dict) -> dict:
         if row["source_id"]:
             ctx.conn.execute("UPDATE source SET status = 'done' WHERE id = ?", (row["source_id"],))
     return {"segments": len(segments), "clips": len(chosen), "tokens": tokens}
+
+
+MAX_IMAGES = 30  # par appel : ~9 000 tokens d'images au plus
+
+
+def segment_images(segments: dict, anchors: dict[str, float]) -> dict[str, list[bytes]]:
+    """Deux images par segment : peu après le début (l'accroche) et le moment fort
+    (ou le milieu). Temps relatifs au fichier de la fenêtre téléchargée."""
+    from .pipeline.layout import keyframe
+
+    out: dict[str, list[bytes]] = {}
+    budget = MAX_IMAGES
+    # Les extraits ancrés sur un pic d'abord : ce sont les plus prometteurs.
+    for sid in sorted(segments, key=lambda k: (not k.endswith("h"), k)):
+        seg, w, _ = segments[sid]
+        if budget < 2 or not w["media_path"]:
+            continue
+        moment = anchors.get(sid, (seg.start + seg.end) / 2)
+        frames = [keyframe(Path(w["media_path"]), t - w["start"]) for t in (seg.start + 1.5, moment)]
+        frames = [f for f in frames if f]
+        if frames:
+            out[sid] = frames
+            budget -= len(frames)
+    return out
 
 
 def dead_discovered(ctx, payload: dict, error: str) -> None:

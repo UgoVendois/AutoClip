@@ -53,7 +53,8 @@ def raise_alert(conn: sqlite3.Connection, bot_id: int | None, kind: str, message
 
 
 def cache_key(provider: AIProvider, request: ScoringRequest) -> str:
-    raw = json.dumps([PROMPT_VERSION, provider.name, provider.model, request.user_content()])
+    images = [hashlib.sha256(data).hexdigest() for _, data in request.image_list()] if provider.supports_images else []
+    raw = json.dumps([PROMPT_VERSION, provider.name, provider.model, request.user_content(), images])
     return hashlib.sha256(raw.encode()).hexdigest()
 
 

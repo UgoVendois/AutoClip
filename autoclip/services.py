@@ -133,6 +133,10 @@ def _check_clip_settings(values: dict[str, Any]) -> None:
     merged = {**DEFAULT_CLIP_SETTINGS, **values}
     if not 5 <= merged["min_seconds"] <= merged["max_seconds"] <= 180:
         raise ServiceError("il faut 5 <= min_seconds <= max_seconds <= 180")
+    if merged["layout"] not in ("auto", "facecam", "fit", "crop"):
+        raise ServiceError("layout : auto, facecam, fit ou crop")
+    if not 0 <= merged["hook_seconds"] <= 10:
+        raise ServiceError("hook_seconds : entre 0 et 10")
 
 
 # -- sources --------------------------------------------------------------------
@@ -214,6 +218,29 @@ def approve_clip(conn: sqlite3.Connection, clip_id: int, *, now: float | None = 
                 (clip_id, account_id, now, now),
             )
     return len(accounts)
+
+
+def set_hook(conn: sqlite3.Connection, queue: JobQueue, clip_id: int, hook: str) -> None:
+    """Change le texte d'accroche d'un clip en attente de validation : il est
+    re-rendu (l'accroche est incrustée dans la vidéo)."""
+    hook = hook.strip()[:60]
+    with tx(conn):
+        clip = conn.execute("SELECT status, hook FROM clip WHERE id = ?", (clip_id,)).fetchone()
+        if clip is None:
+            raise ServiceError(f"clip {clip_id} introuvable")
+        if clip["status"] not in ("review", "failed"):
+            raise ServiceError("l'accroche se modifie seulement avant validation")
+        if clip["hook"] == hook:
+            return
+        conn.execute("UPDATE clip SET hook = ?, status = 'render', updated_at = ? WHERE id = ?",
+                     (hook, time.time(), clip_id))
+        queue.enqueue("render", {"clip_id": clip_id}, key=f"render:{clip_id}:{short_key(hook)}")
+
+
+def short_key(text: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(text.encode()).hexdigest()[:10]
 
 
 def reject_clip(conn: sqlite3.Connection, clip_id: int) -> None:

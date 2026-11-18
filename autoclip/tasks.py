@@ -19,6 +19,7 @@ from .db import tx
 from .jobs.queue import JobQueue, PermanentError
 from .jobs.worker import Task
 from .pipeline import analyze, ingest, render
+from .pipeline import layout as lay
 from .pipeline.cache import Cache, sha256_file, short_hash
 from .pipeline.transcribe import FasterWhisperTranscriber, Transcriber
 from .publishers import Account, PublishRequest, Publisher, publisher_for_platform
@@ -153,17 +154,22 @@ def run_render(ctx: Context, payload: dict) -> dict:
     if clip["status"] not in ("render", "failed"):  # 'failed' : relance manuelle
         return {"skipped": clip["status"]}
     settings = services.bot_settings(services.get_bot(ctx.conn, clip["bot_id"]))
-    style = {k: settings[k] for k in ("subtitle_words", "font", "font_size")}
-    out = ctx.cache.path("render", f"clip-{clip['id']}-{short_hash(clip['start_ms'], clip['end_ms'], style)}.mp4")
     # Clip découvert : le média est l'extrait téléchargé, qui commence à media_offset.
     media = clip["media_path"] or clip["source_media"]
     if not media:
         raise PermanentError(f"clip {clip['id']} : aucun média source")
     offset = clip["media_offset_ms"] / 1000
+    start, end = clip["start_ms"] / 1000 - offset, clip["end_ms"] / 1000 - offset
+    layout, facecam = lay.choose(settings["layout"], Path(media), start, end,
+                                 ctx.cache.path("layout", f"{short_hash(media, start, end)}.json"))
+    hook = clip["hook"] if settings["hook_text"] else ""
+    style = {k: settings[k] for k in ("subtitle_words", "font", "font_size", "trim_silences", "hook_seconds")}
+    style.update(layout=layout, facecam=facecam and [facecam.x, facecam.y, facecam.w, facecam.h], hook=hook)
+    out = ctx.cache.path("render", f"clip-{clip['id']}-{short_hash(clip['start_ms'], clip['end_ms'], style)}.mp4")
     words = [{**w, "start": w["start"] - offset, "end": w["end"] - offset} for w in json.loads(clip["words"])]
-    render.render_clip(Path(media), clip["start_ms"] / 1000 - offset, clip["end_ms"] / 1000 - offset,
-                       words, out, group_size=style["subtitle_words"],
-                       font=style["font"], font_size=style["font_size"])
+    render.render_clip(Path(media), start, end, words, out, group_size=style["subtitle_words"],
+                       font=style["font"], font_size=style["font_size"], layout=layout, facecam=facecam,
+                       trim_silences=settings["trim_silences"], hook=hook, hook_seconds=settings["hook_seconds"])
     with tx(ctx.conn):
         ctx.conn.execute(
             "UPDATE clip SET file_path = ?, status = 'review', error = NULL, updated_at = ? "

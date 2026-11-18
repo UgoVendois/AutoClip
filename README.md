@@ -71,6 +71,14 @@ autoclip alerts
 
 Fournisseurs : `anthropic` (Claude, `claude-opus-5-5` par défaut, réglable avec `model=`), `gemini`, `openai`, `mistral` (clés à enregistrer dans Paramètres > Clés d'API), `ollama` (local), `fake` (tests). Un bot en dry run utilise toujours le faux fournisseur : aucun appel payant.
 
+## Clips viraux (jeu vidéo, streams)
+
+- **Mise en page** (Configuration > Découpage) : automatique (facecam en haut et jeu en bas si une webcam est détectée, sinon jeu entier sur fond flouté), facecam + jeu, fond flouté, ou recadrage central. La webcam est repérée localement (modèle YuNet fourni, OpenCV) : un visage qui reste au même endroit.
+- **Démarrage sur l'action** : avec un pic de chat, l'extrait commence quelques secondes avant le moment fort (pic moins le retard du chat, `chat_delay_seconds`), même sans parole.
+- **Coupe des silences** : les passages sans voix ni son de jeu de plus de 0,7 s sont retirés, sous-titres recalés.
+- **L'IA voit l'image** : deux images clés par extrait sont envoyées avec la transcription (Claude, Gemini, OpenAI, Mistral ; désactivable avec `autoclip ai set BOT vision=false`).
+- **Texte d'accroche** écrit par l'IA, incrusté les premières secondes ; modifiable dans la file d'attente avant validation (le clip est re-rendu).
+
 ## Vérifier les clés d'API
 
 Paramètres > Clés d'API : bouton **Tester** sur chaque clé (et **Tout tester**), lancé aussi à l'enregistrement. Chaque test est un appel gratuit et sans effet : liste des modèles (IA), jeton d'application (Twitch, TikTok, Meta), échange OAuth volontairement invalide qui distingue un identifiant faux d'un bon (YouTube), lecture à 1 unité de quota (YouTube Data). En ligne de commande : `autoclip credentials test [PLATEFORME]`.

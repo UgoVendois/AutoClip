@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS bot (
@@ -277,6 +277,11 @@ CREATE TABLE IF NOT EXISTS playlist_item (
     added_at       REAL NOT NULL,
     PRIMARY KEY (playlist_id, publish_job_id)
 );
+""",
+    4: """
+-- Clips viraux : texte d'accroche incrusté, instant du pic de chat par fenêtre.
+ALTER TABLE clip ADD COLUMN hook TEXT NOT NULL DEFAULT '';
+ALTER TABLE candidate_window ADD COLUMN peak REAL;
 """,
 }
 

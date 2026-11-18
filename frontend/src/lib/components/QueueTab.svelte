@@ -12,7 +12,7 @@
   let clips = $state([]);
   let publications = $state([]);
   let failedJobs = $state([]);
-  let edits = $state({}); // { [clipId]: { title, description } }
+  let edits = $state({}); // { [clipId]: { title, description, hook } }
   let busy = $state({}); // { [clipId]: true } pendant une validation
   let loaded = $state(false);
 
@@ -32,7 +32,7 @@
         api.get('/jobs?status=failed&limit=200'),
       ]);
       for (const c of allClips) {
-        if (c.status === 'review' && !edits[c.id]) edits[c.id] = { title: c.title, description: c.description };
+        if (c.status === 'review' && !edits[c.id]) edits[c.id] = { title: c.title, description: c.description, hook: c.hook ?? '' };
       }
       // Ne garder que les échecs qui concernent ce bot.
       const sourceIds = new Set(bot.sources.map((s) => s.id));
@@ -58,7 +58,7 @@
   async function decide(clip, approve) {
     busy[clip.id] = true;
     const ok = approve
-      ? await run(api.post(`/clips/${clip.id}/approve`, edits[clip.id]), 'Clip validé : il sera publié selon le planning')
+      ? await run(api.post(`/clips/${clip.id}/approve`, { title: edits[clip.id].title, description: edits[clip.id].description }), 'Clip validé : il sera publié selon le planning')
       : await run(api.post(`/clips/${clip.id}/reject`), 'Clip rejeté');
     busy[clip.id] = false;
     if (ok) {
@@ -66,6 +66,17 @@
       await load(bot.id);
       reload();
       refreshBots();
+    }
+  }
+
+  // L'accroche est incrustée dans la vidéo : la changer relance le rendu du clip.
+  async function saveHook(clip) {
+    busy[clip.id] = true;
+    const ok = await run(api.put(`/clips/${clip.id}/hook`, { hook: edits[clip.id].hook }), 'Nouvelle accroche : rendu en cours');
+    busy[clip.id] = false;
+    if (ok) {
+      delete edits[clip.id];
+      await load(bot.id);
     }
   }
 
@@ -130,9 +141,23 @@
                     {fmtClock(clip.start_ms / 1000)} → {fmtClock(clip.end_ms / 1000)}
                     · {Math.round((clip.end_ms - clip.start_ms) / 1000)} s
                   </span>
-                  <span title="Score de l'analyse">score {clip.score.toFixed(2)}</span>
+                  <span title="Score de l'analyse">score {clip.score > 1 ? Math.round(clip.score) : clip.score.toFixed(2)}</span>
                 </div>
+                {#if clip.reason}
+                  <p class="text-xs text-muted"><Icon name="sparkle" size={12} class="mr-1 inline text-accent" />{clip.reason}</p>
+                {/if}
                 {#if edits[clip.id]}
+                  <div>
+                    <label class="label" for="hook-{clip.id}">Accroche à l'écran</label>
+                    <div class="flex gap-2">
+                      <input id="hook-{clip.id}" class="input" maxlength="60" placeholder="Aucune accroche" bind:value={edits[clip.id].hook} />
+                      {#if (edits[clip.id].hook ?? '') !== (clip.hook ?? '')}
+                        <button class="btn shrink-0" disabled={busy[clip.id]} onclick={() => saveHook(clip)} title="Refaire la vidéo avec cette accroche">
+                          <Icon name="refresh" size={14} /> Appliquer
+                        </button>
+                      {/if}
+                    </div>
+                  </div>
                   <div>
                     <label class="label" for="title-{clip.id}">Titre</label>
                     <input id="title-{clip.id}" class="input" maxlength="100" bind:value={edits[clip.id].title} />

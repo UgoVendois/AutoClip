@@ -51,7 +51,7 @@ def http_error(code, message="nope"):
                                   io.BytesIO(json.dumps({"error": {"message": message}}).encode()))
 
 
-SCORES = {"segments": [{"id": "a", "score": 80, "reason": "r", "title": "t", "description": "d"}]}
+SCORES = {"segments": [{"id": "a", "score": 80, "reason": "r", "title": "t", "description": "d", "hook": "h"}]}
 
 
 class TestSchema(unittest.TestCase):
@@ -303,7 +303,7 @@ class TestMigrationV3(unittest.TestCase):
             old.commit()
             old.close()
             conn = db.connect(path)
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], db.SCHEMA_VERSION)
             for table in ("identity", "playlist", "playlist_item"):
                 conn.execute(f"SELECT * FROM {table}")
             conn.close()
