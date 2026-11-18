@@ -134,7 +134,11 @@ def save_connected_account(conn: sqlite3.Connection, creds) -> int:
     youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
     channels = youtube.channels().list(part="snippet", mine=True).execute().get("items", [])
     if not channels:
-        raise PermanentPublishError("Ce compte Google n'a pas de chaîne YouTube : crée-la sur youtube.com, puis réessaie.")
+        raise PermanentPublishError(
+            "Google a bien connecté le compte, mais il n'a pas de chaîne YouTube. Si ta chaîne existe, elle est "
+            "sans doute sur un compte de marque : à la connexion, choisis le nom de la chaîne dans la liste "
+            "« Choisir un compte ou une chaîne », pas ton compte personnel. Sinon, crée la chaîne sur "
+            "youtube.com (photo de profil > Créer une chaîne), puis réessaie.")
     channel = channels[0]
     ref = f"token:youtube:{channel['id']}"
     secrets.set(ref, creds.to_json())
