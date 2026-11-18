@@ -36,6 +36,10 @@ def update_settings(conn: sqlite3.Connection, changes: dict[str, Any]) -> dict[s
         raise ServiceError("youtube_privacy : private, unlisted ou public")
     if changes.get("ui_theme", "system") not in ("system", "light", "dark"):
         raise ServiceError("ui_theme : system, light ou dark")
+    if changes.get("identity_provider", "anthropic") not in AI_PROVIDERS[1:]:
+        raise ServiceError(f"identity_provider : {', '.join(AI_PROVIDERS[1:])}")
+    if changes.get("image_provider", "svg") not in ("svg", "gemini", "openai", "fake"):
+        raise ServiceError("image_provider : svg, gemini, openai ou fake")
     with tx(conn):
         for key, value in changes.items():
             conn.execute(
@@ -69,7 +73,7 @@ def ai_settings(row: sqlite3.Row) -> dict[str, Any]:
     return {**DEFAULT_AI_SETTINGS, **json.loads(row["ai_settings"])}
 
 
-AI_PROVIDERS = ("none", "anthropic", "ollama", "fake")
+AI_PROVIDERS = ("none", "anthropic", "gemini", "openai", "mistral", "ollama", "fake")
 
 
 def _check_ai_settings(values: dict[str, Any]) -> None:

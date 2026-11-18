@@ -3,6 +3,7 @@
   import { api } from '../api.js';
   import { app, askConfirm, run, toast } from '../state.svelte.js';
   import Icon from './Icon.svelte';
+  import ModelPicker from './ModelPicker.svelte';
   import Section from './Section.svelte';
   import ThemeSwitch from './ThemeSwitch.svelte';
 
@@ -34,16 +35,73 @@
     instagram: {
       name: 'Instagram',
       help: "App Meta avec l'API Instagram Graph. Connecteur prévu dans une prochaine phase.",
-      url: 'https://developers.facebook.com/apps',
+      url: 'https://developers.facebook.com/',
       urlLabel: 'Meta for Developers',
     },
     anthropic: {
       name: 'Anthropic (Claude)',
-      help: "Clé d'API pour noter les extraits et rédiger titres et descriptions.",
+      help: "Clé d'API pour noter les extraits, rédiger titres et descriptions, et proposer l'identité des chaînes.",
       url: 'https://platform.claude.com/settings/keys',
       urlLabel: 'Claude Console',
     },
+    gemini: {
+      name: 'Google Gemini',
+      help: "Clé d'API Gemini : texte, et images (Nano Banana) pour les photos de profil et les bannières.",
+      url: 'https://aistudio.google.com/apikey',
+      urlLabel: 'Google AI Studio',
+    },
+    openai: {
+      name: 'OpenAI (ChatGPT)',
+      help: "Clé d'API OpenAI : texte, et images (GPT Image) pour les photos de profil et les bannières.",
+      url: 'https://platform.openai.com/api-keys',
+      urlLabel: 'OpenAI Platform',
+    },
+    mistral: {
+      name: 'Mistral AI',
+      help: "Clé d'API Mistral (La Plateforme) : modèles de texte européens.",
+      url: 'https://console.mistral.ai/api-keys',
+      urlLabel: 'Console Mistral',
+    },
   };
+
+  // Les clés rangées par usage : qui réfléchit, où l'on publie, où l'on cherche.
+  const GROUPS = [
+    {
+      id: 'ai',
+      title: 'Intelligence artificielle',
+      icon: 'cpu',
+      blurb: 'Les cerveaux : notation des extraits, textes, identité des chaînes et visuels.',
+      platforms: ['anthropic', 'gemini', 'openai', 'mistral'],
+    },
+    {
+      id: 'social',
+      title: 'Réseaux sociaux',
+      icon: 'share',
+      blurb: 'Là où les Shorts sont publiés.',
+      platforms: ['youtube', 'tiktok', 'instagram'],
+    },
+    {
+      id: 'scouting',
+      title: 'Veille & collecte',
+      icon: 'radar',
+      blurb: 'Là où les bots repèrent les moments forts à clipper.',
+      platforms: ['twitch', 'youtube_data'],
+    },
+  ];
+
+  const TEXT_PROVIDERS = [
+    { value: 'anthropic', label: 'Claude (Anthropic)' },
+    { value: 'gemini', label: 'Gemini (Google)' },
+    { value: 'openai', label: 'ChatGPT (OpenAI)' },
+    { value: 'mistral', label: 'Mistral AI' },
+    { value: 'ollama', label: 'Ollama (local, gratuit)' },
+  ];
+  const IMAGE_PROVIDERS = [
+    { value: 'svg', label: 'Dessin vectoriel par le modèle de texte' },
+    { value: 'gemini', label: 'Gemini : Nano Banana' },
+    { value: 'openai', label: 'OpenAI : GPT Image' },
+  ];
+  let defaults = $state({ text: {}, image: {} });
   const FIELD_LABELS = {
     client_id: 'Client ID',
     client_secret: 'Client secret',
@@ -88,7 +146,12 @@
   }
 
   onMount(async () => {
-    await Promise.all([run(loadCreds()), loadAccounts(), (async () => (status = await api.get('/status')))()]);
+    await Promise.all([
+      run(loadCreds()),
+      loadAccounts(),
+      (async () => (status = await api.get('/status')))(),
+      (async () => (defaults = await api.get('/ai/providers')))(),
+    ]);
   });
 
   async function save(key, value) {
@@ -208,12 +271,57 @@
           </div>
         </div>
       </Section>
+
+      <Section title="Agent identité de chaîne" icon="palette" description="L'IA qui propose nom, description, playlists, photo de profil et bannière (onglet Chaîne de chaque bot).">
+        <div class="grid gap-x-4 gap-y-5 md:grid-cols-2">
+          <div>
+            <label class="label" for="id-provider">Textes : fournisseur</label>
+            <select id="id-provider" class="input" value={app.settings.identity_provider}
+              onchange={async (e) => { await save('identity_provider', e.target.value); await save('identity_model', null); }}>
+              {#if app.settings.identity_provider === 'fake'}<option value="fake">Simulé (tests, aucun appel)</option>{/if}
+              {#each TEXT_PROVIDERS as p}<option value={p.value}>{p.label}{creds && creds.fields[p.value] && !creds.configured[p.value] ? ' (clé manquante)' : ''}</option>{/each}
+            </select>
+          </div>
+          <div>
+            <label class="label" for="id-model">Textes : modèle</label>
+            <ModelPicker id="id-model" provider={app.settings.identity_provider} value={app.settings.identity_model}
+              defaultModel={defaults.text[app.settings.identity_provider]} onchange={(v) => save('identity_model', v)} />
+          </div>
+          <div>
+            <label class="label" for="img-provider">Images : fournisseur</label>
+            <select id="img-provider" class="input" value={app.settings.image_provider}
+              onchange={async (e) => { await save('image_provider', e.target.value); await save('image_model', null); }}>
+              {#if app.settings.image_provider === 'fake'}<option value="fake">Simulé (tests, aucun appel)</option>{/if}
+              {#each IMAGE_PROVIDERS as p}<option value={p.value}>{p.label}{creds && creds.fields[p.value] && !creds.configured[p.value] ? ' (clé manquante)' : ''}</option>{/each}
+            </select>
+            <p class="hint">Le dessin vectoriel donne un rendu graphique et net ; Gemini et OpenAI génèrent de vraies illustrations.</p>
+          </div>
+          <div>
+            <label class="label" for="img-model">Images : modèle</label>
+            <ModelPicker id="img-model" kind="image" provider={app.settings.image_provider} value={app.settings.image_model}
+              defaultModel={defaults.image[app.settings.image_provider]} onchange={(v) => save('image_model', v)} />
+          </div>
+        </div>
+      </Section>
     {/if}
 
     <Section title="Clés d'API" icon="key" description="Stockées dans le trousseau système (libsecret), jamais en clair. Elles ne sont jamais réaffichées ici.">
       {#if creds}
-        <div class="space-y-3">
-          {#each Object.entries(creds.fields) as [platform, fields] (platform)}
+        <div class="space-y-7">
+        {#each GROUPS as group (group.id)}
+        {@const count = group.platforms.filter((p) => creds.configured[p]).length}
+        <div>
+          <div class="mb-3 flex items-center gap-2.5">
+            <span class="grid size-7 place-items-center rounded-lg bg-accent-soft text-accent"><Icon name={group.icon} size={15} /></span>
+            <div class="min-w-0 flex-1">
+              <h3 class="text-sm font-semibold">{group.title}</h3>
+              <p class="text-xs text-muted">{group.blurb}</p>
+            </div>
+            <span class="text-xs text-faint">{count} / {group.platforms.length} configurée{count > 1 ? 's' : ''}</span>
+          </div>
+        <div class="space-y-2">
+          {#each group.platforms.filter((p) => creds.fields[p]) as platform (platform)}
+            {@const fields = creds.fields[platform]}
             {@const configured = creds.configured[platform]}
             <details class="group rounded-xl border border-line" open={platform === 'youtube' && !configured}>
               <summary class="flex cursor-pointer list-none items-center gap-3 px-4 py-3">
@@ -269,6 +377,9 @@
             </details>
           {/each}
         </div>
+        </div>
+        {/each}
+        </div>
         <input bind:this={fileInput} type="file" accept=".json,application/json" class="hidden" onchange={onFile} />
       {:else}
         <span class="spinner text-muted"></span>
@@ -283,6 +394,11 @@
               <span class="text-xs font-medium uppercase text-faint">{account.platform}</span>
               <span class="flex-1">{account.display_name}</span>
               {#if !account.connected}<span class="badge" title="Compte utilisé pour les dry runs">Simulé</span>{/if}
+              {#if account.connected && account.platform === 'youtube' && !account.can_manage}
+                <button class="badge badge-warning" title="Nouvelle autorisation nécessaire pour la bannière, la description et les playlists" onclick={connectYoutube} disabled={connecting}>
+                  <Icon name="refresh" size={11} /> Reconnecter
+                </button>
+              {/if}
               <button class="icon-btn danger" title="Déconnecter" aria-label="Déconnecter {account.display_name}" onclick={() => removeAccount(account)}>
                 <Icon name="trash" size={14} />
               </button>

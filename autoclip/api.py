@@ -51,6 +51,10 @@ class ScheduleIn(BaseModel):
     enabled: bool = True
 
 
+class IdentityIn(BaseModel):
+    brief: str = ""
+
+
 class ApproveIn(BaseModel):
     title: str | None = None
     description: str | None = None
@@ -251,6 +255,73 @@ def create_app(home: Path) -> FastAPI:
         return {"connected": bool(token), "login": token.get("login") if token else None,
                 "login_flow": twitch_login or None}
 
+    # -- agent identité de chaîne --------------------------------------------------
+    from . import identity as ident
+
+    @api.get("/bots/{bot_id}/identity")
+    def get_identity(bot_id: int, conn=Depends(get_conn)):
+        guard(services.get_bot, conn, bot_id)
+        return {"identity": ident.latest(conn, bot_id),
+                "playlists": _rows(conn.execute(
+                    "SELECT p.*, (SELECT COUNT(*) FROM playlist_item i WHERE i.playlist_id = p.id) AS items "
+                    "FROM playlist p WHERE p.bot_id = ? ORDER BY p.id", (bot_id,)))}
+
+    @api.post("/bots/{bot_id}/identity", status_code=201)
+    def start_identity(bot_id: int, body: IdentityIn, conn=Depends(get_conn)):
+        return {"id": guard(ident.start, conn, JobQueue(conn), bot_id, body.brief)}
+
+    @api.patch("/identity/{identity_id}")
+    def patch_identity(identity_id: int, changes: dict[str, Any], conn=Depends(get_conn)):
+        return guard(ident.update_choice, conn, identity_id, changes)
+
+    @api.post("/identity/{identity_id}/images")
+    def identity_images(identity_id: int, conn=Depends(get_conn)):
+        guard(ident.regenerate_images, conn, JobQueue(conn), identity_id)
+        return {"ok": True}
+
+    @api.post("/identity/{identity_id}/apply")
+    def identity_apply(identity_id: int, conn=Depends(get_conn)):
+        guard(ident.apply, conn, JobQueue(conn), identity_id)
+        return {"ok": True}
+
+    @api.get("/identity/{identity_id}/image/{kind}")
+    def identity_image(identity_id: int, kind: str, conn=Depends(get_conn)):
+        if kind not in ("avatar", "banner"):
+            raise HTTPException(404, "image inconnue")
+        row = guard(ident.get, conn, identity_id)
+        path = row[f"{kind}_path"]
+        if not path or not Path(path).is_file():
+            raise HTTPException(404, "image pas encore générée")
+        name = f"{kind}{Path(path).suffix}"
+        return FileResponse(path, filename=name, headers={"Cache-Control": "no-store"})
+
+    @api.get("/ai/providers")
+    def ai_providers():
+        from .ai.images import DEFAULT_IMAGE_MODELS, IMAGE_PROVIDERS
+        from .ai.providers import DEFAULT_MODELS, TEXT_PROVIDERS
+
+        return {"text": {p: DEFAULT_MODELS.get(p) for p in TEXT_PROVIDERS},
+                "image": {p: DEFAULT_IMAGE_MODELS.get(p) for p in IMAGE_PROVIDERS}}
+
+    @api.get("/ai/models/{provider}")
+    def ai_models(provider: str, kind: str = "text"):
+        """Modèles réellement proposés par le fournisseur (avec la clé enregistrée)."""
+        from .ai.base import AIProviderError
+        from .ai.providers import make_text_provider
+
+        try:
+            models = make_text_provider(provider).list_models()
+        except AIProviderError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 : réseau, quota...
+            raise HTTPException(502, f"{provider} : {exc}") from exc
+        is_image = lambda m: "image" in m or m.startswith("dall-e")  # noqa: E731
+        if kind == "image":
+            models = [m for m in models if is_image(m)]
+        else:
+            models = [m for m in models if not is_image(m)]
+        return {"models": models}
+
     # -- clips et file d'approbation -------------------------------------------
     @api.get("/clips")
     def clips(bot_id: int | None = None, status: str | None = None, conn=Depends(get_conn)):
@@ -335,9 +406,18 @@ def create_app(home: Path) -> FastAPI:
 
     @api.get("/accounts")
     def accounts(conn=Depends(get_conn)):
-        return _rows(conn.execute(
-            "SELECT id, platform, display_name, keyring_ref IS NOT NULL AS connected, created_at "
-            "FROM account ORDER BY id"))
+        from .publishers.youtube import has_manage_scope
+
+        rows = conn.execute("SELECT id, platform, display_name, keyring_ref, created_at FROM account ORDER BY id")
+        out = []
+        for r in rows:
+            item = dict(r)
+            ref = item.pop("keyring_ref")
+            item["connected"] = ref is not None
+            # Jeton antérieur à l'agent identité : il faut reconnecter pour gérer la chaîne.
+            item["can_manage"] = item["platform"] == "youtube" and ref is not None and has_manage_scope(ref)
+            out.append(item)
+        return out
 
     @api.post("/accounts/{platform}/connect")
     async def connect(platform: str):

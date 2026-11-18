@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -79,19 +81,38 @@ class AIProviderError(PermanentError):
     """Erreur de configuration (clé absente, modèle inconnu) : inutile de réessayer."""
 
 
+class AIRefusal(AIProviderError):
+    """Le modèle a refusé de répondre (filtre de sécurité)."""
+
+
+T = TypeVar("T", bound=BaseModel)
+
+
 class AIProvider(ABC):
     name: str
     model: str
     # Sortie attendue par segment, pour estimer le coût avant l'appel.
     output_tokens_per_segment = 120
 
-    @abstractmethod
     def estimate_tokens(self, request: ScoringRequest) -> int:
         """Estimation entrée + sortie, avant tout appel payant."""
+        return (rough_token_count(SYSTEM_PROMPT + request.user_content())
+                + self.output_tokens_per_segment * len(request.segments))
 
     @abstractmethod
+    def complete_json(self, system: str, user: str, schema: type[T], *,
+                      max_tokens: int = 4000) -> tuple[T, Usage]:
+        """Un appel, réponse JSON conforme au modèle pydantic `schema`.
+        Lève AIRefusal, AIProviderError (définitif) ou une autre exception (réessayable)."""
+
     def score(self, request: ScoringRequest) -> tuple[ScoringResult, Usage]:
         """Note les segments en un seul appel."""
+        max_tokens = 2000 + self.output_tokens_per_segment * len(request.segments) * 2
+        try:
+            return self.complete_json(SYSTEM_PROMPT, request.user_content(), ScoringResult,
+                                      max_tokens=max_tokens)
+        except AIRefusal:
+            return ScoringResult(segments=[]), Usage(0, 0)  # tous les segments vaudront 0
 
 
 def validate_result(request: ScoringRequest, result: ScoringResult) -> dict[str, SegmentScore]:
@@ -107,3 +128,26 @@ def validate_result(request: ScoringRequest, result: ScoringResult) -> dict[str,
 def rough_token_count(text: str) -> int:
     """Approximation prudente (≈ 3,5 caractères par token pour du français)."""
     return int(len(text) / 3.5) + 1
+
+
+def json_schema(model: type[BaseModel], *, strict: bool = False) -> dict:
+    """Schéma JSON autonome (références `$defs` développées), accepté par toutes
+    les API. `strict` : objets fermés et tous les champs requis (OpenAI)."""
+    schema = model.model_json_schema()
+    defs = schema.pop("$defs", {})
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                return walk(copy.deepcopy(defs[node["$ref"].rsplit("/", 1)[-1]]))
+            # "title" texte = libellé pydantic, inutile ; un champ nommé "title" est gardé.
+            out = {k: walk(v) for k, v in node.items() if not (k == "title" and isinstance(v, str))}
+            if out.get("type") == "object" and strict:
+                out["additionalProperties"] = False
+                out["required"] = list(out.get("properties", {}))
+            return out
+        if isinstance(node, list):
+            return [walk(v) for v in node]
+        return node
+
+    return walk(schema)

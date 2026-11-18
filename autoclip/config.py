@@ -38,6 +38,11 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "youtube_privacy": "private",  # private | unlisted | public
     "default_dry_run": True,
     "ui_theme": "system",  # system | light | dark
+    # Agent identité de chaîne (textes, puis visuels).
+    "identity_provider": "anthropic",  # anthropic | gemini | openai | mistral | ollama | fake
+    "identity_model": None,  # None = modèle par défaut du fournisseur
+    "image_provider": "svg",  # svg (dessiné par le modèle de texte) | gemini | openai | fake
+    "image_model": None,
 }
 
 # Paramètres de clipping propres à chaque bot (colonne `bot.clip_settings`).
@@ -53,7 +58,7 @@ DEFAULT_CLIP_SETTINGS: dict[str, object] = {
 
 # Découverte automatique et IA, propres à chaque bot (colonne `bot.ai_settings`).
 DEFAULT_AI_SETTINGS: dict[str, object] = {
-    "provider": "none",  # none | anthropic | ollama | fake
+    "provider": "none",  # none | anthropic | gemini | openai | mistral | ollama | fake
     "model": None,  # None = modèle par défaut du fournisseur
     "effort": "low",  # anthropic : low | medium | high
     "daily_token_budget": 200_000,  # entrée + sortie, tous appels du jour

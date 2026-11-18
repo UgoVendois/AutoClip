@@ -221,6 +221,34 @@ def cmd_ai(args) -> int:
     return 0
 
 
+def cmd_identity(args) -> int:
+    from . import identity
+
+    rt = _runtime(args)
+    conn = rt.ctx.conn
+    if args.action == "models":
+        from .ai.providers import make_text_provider
+
+        for name in make_text_provider(args.provider).list_models():
+            print(name)
+        return 0
+    if args.action == "generate":
+        ident_id = identity.start(conn, rt.ctx.queue, args.bot, args.brief or "")
+        print(f"proposition {ident_id} en cours (traitée par le démon, ou `autoclip work`)")
+        return 0
+    current = identity.latest(conn, args.bot)
+    if current is None:
+        print("aucune proposition : `autoclip identity generate BOT --brief ...`")
+        return 1
+    if args.action == "apply":
+        identity.apply(conn, rt.ctx.queue, current["id"])
+        print("application en cours sur la chaîne (traitée par le démon, ou `autoclip work`)")
+        return 0
+    print(json.dumps({k: current[k] for k in ("id", "status", "images_status", "choice", "avatar_path",
+                                               "banner_path", "error")}, indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_alerts(args) -> int:
     rt = _runtime(args)
     alerts = services.list_alerts(rt.ctx.conn)
@@ -377,6 +405,16 @@ def build_parser() -> argparse.ArgumentParser:
     ai_set.add_argument("values", nargs="+", metavar="CLÉ=VALEUR")
     for parser in ai_sub.choices.values():
         parser.set_defaults(func=cmd_ai)
+
+    idt = sub.add_parser("identity", help="agent identité de chaîne (nom, bannière, playlists)")
+    id_sub = idt.add_subparsers(dest="action", required=True)
+    ig = id_sub.add_parser("generate", help="propose une identité pour la chaîne du bot")
+    ig.add_argument("bot", type=int)
+    ig.add_argument("--brief", help="thème, ton, public visé...")
+    for name in ("show", "apply"):
+        id_sub.add_parser(name).add_argument("bot", type=int)
+    id_sub.add_parser("models", help="modèles disponibles chez un fournisseur").add_argument("provider")
+    idt.set_defaults(func=cmd_identity)
 
     sub.add_parser("alerts", help="alertes (budget IA atteint...)").set_defaults(func=cmd_alerts)
     sub.add_parser("twitch-login", help="connecter un compte Twitch (lecture du chat)").set_defaults(func=cmd_twitch)

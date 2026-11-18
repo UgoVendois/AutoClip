@@ -28,7 +28,8 @@ log = logging.getLogger(__name__)
 
 LEASES = {"ingest": 3 * 3600, "transcribe": 6 * 3600, "analyze": 600, "render": 3600,
           "publish": 3600, "discover": 600, "presort": 2 * 3600, "prepare_window": 3600,
-          "ai_score": 1800}
+          "ai_score": 1800, "identity_generate": 900, "identity_images": 1800,
+          "identity_apply": 1800, "playlist_add": 600}
 
 
 @dataclass
@@ -41,6 +42,8 @@ class Context:
     force_dry_run: bool = False
     publisher_override: Callable[[str], Publisher] | None = None
     ai_override: object | None = None  # AIProvider imposé (tests)
+    image_override: object | None = None  # ImageGenerator imposé (tests)
+    channel_override: Callable[[str], object] | None = None  # ChannelManager par plateforme
 
     def publisher(self, dry_run: bool, platform: str) -> Publisher:
         if dry_run or self.force_dry_run:
@@ -230,6 +233,11 @@ def run_publish(ctx: Context, payload: dict) -> dict:
         if remaining == 0:
             ctx.conn.execute("UPDATE clip SET status = 'published', updated_at = ? WHERE id = ?",
                              (now, row["clip_id"]))
+        has_playlists = ctx.conn.execute(
+            "SELECT 1 FROM playlist WHERE bot_id = ? AND account_id = ? AND external_id IS NOT NULL",
+            (row["bot_id"], row["account_id"])).fetchone()
+        if has_playlists:
+            ctx.queue.enqueue("playlist_add", {"publish_job_id": row["id"]}, key=f"playlist_add:{row['id']}")
     return {"external_id": result.external_id, "url": result.url}
 
 
@@ -261,8 +269,9 @@ def dead_publish(ctx: Context, payload: dict, error: str) -> None:
 
 def _discovery_tasks() -> dict[str, Task]:
     from .discovery_tasks import DISCOVERY_TASKS
+    from .identity import IDENTITY_TASKS
 
-    return DISCOVERY_TASKS
+    return {**DISCOVERY_TASKS, **IDENTITY_TASKS}
 
 
 TASKS: dict[str, Task] = {

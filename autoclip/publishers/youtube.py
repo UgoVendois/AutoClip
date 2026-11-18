@@ -19,7 +19,16 @@ from .base import (Account, PermanentPublishError, Publisher, PublishRequest, Pu
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
+    # Gestion de la chaîne (bannière, description, playlists) : agent identité.
+    "https://www.googleapis.com/auth/youtube",
 ]
+MANAGE_SCOPE = SCOPES[2]
+
+
+def has_manage_scope(keyring_ref: str | None) -> bool:
+    """Le jeton enregistré autorise-t-il la gestion de la chaîne ?"""
+    info = secrets.get_json(keyring_ref or "") or {}
+    return MANAGE_SCOPE in (info.get("scopes") or [])
 RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
 RETRYABLE_REASONS = {"quotaExceeded", "rateLimitExceeded", "userRateLimitExceeded", "backendError"}
 CHUNK = 8 * 1024 * 1024
@@ -81,7 +90,8 @@ class YouTubePublisher(Publisher):
         info = secrets.get_json(account.keyring_ref or "")
         if not info:
             raise PermanentPublishError(f"compte {account.display_name} non connecté")
-        creds = Credentials.from_authorized_user_info(info, SCOPES)
+        # Droits du jeton tels qu'accordés (un ancien jeton n'a pas MANAGE_SCOPE).
+        creds = Credentials.from_authorized_user_info(info)
         if not creds.valid:
             try:
                 creds.refresh(Request())

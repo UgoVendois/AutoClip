@@ -1,4 +1,5 @@
-"""Fournisseurs d'IA : Claude (API Anthropic), Ollama (local) et un faux pour les tests."""
+"""Fournisseurs d'IA : Claude (API Anthropic), Gemini, OpenAI, Mistral (API HTTP),
+Ollama (local) et un faux pour les tests."""
 
 from __future__ import annotations
 
@@ -10,14 +11,18 @@ import urllib.request
 from pydantic import ValidationError
 
 from .. import secrets
-from .base import (SYSTEM_PROMPT, AIProvider, AIProviderError, ScoringRequest, ScoringResult,
-                   SegmentScore, Usage, rough_token_count)
+from .base import (SYSTEM_PROMPT, AIProvider, AIProviderError, AIRefusal, ScoringRequest,
+                   ScoringResult, SegmentScore, T, Usage, json_schema, rough_token_count)
+from .remote import DEFAULT_REMOTE_MODELS, GeminiProvider, MistralProvider, OpenAIProvider
 
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-5-5",
     "ollama": "qwen2.5:3b",
     "fake": "fake-1",
+    **DEFAULT_REMOTE_MODELS,
 }
+
+TEXT_PROVIDERS = ("anthropic", "gemini", "openai", "mistral", "ollama", "fake")
 
 
 class AnthropicProvider(AIProvider):
@@ -29,40 +34,36 @@ class AnthropicProvider(AIProvider):
     def __init__(self, model: str | None = None, effort: str = "low") -> None:
         import anthropic
 
-        creds = secrets.get_json(secrets.credentials_key("anthropic"))
-        if not creds or not creds.get("api_key"):
-            raise AIProviderError("clé Anthropic absente : `autoclip credentials set anthropic`")
         self.model = model or DEFAULT_MODELS["anthropic"]
         self.effort = effort
         self._anthropic = anthropic
-        self.client = anthropic.Anthropic(api_key=creds["api_key"], max_retries=3)
+        self.client = anthropic.Anthropic(api_key=api_key("anthropic"), max_retries=3)
 
-    def _params(self, request: ScoringRequest) -> dict:
+    @staticmethod
+    def _params(system: str, user: str, model: str) -> dict:
         return {
-            "model": self.model,
-            "system": [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-            "messages": [{"role": "user", "content": request.user_content()}],
+            "model": model,
+            "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+            "messages": [{"role": "user", "content": user}],
         }
-
-    def _max_tokens(self, request: ScoringRequest) -> int:
-        # Marge pour la réflexion du modèle en plus du JSON.
-        return 2000 + self.output_tokens_per_segment * len(request.segments) * 2
 
     def estimate_tokens(self, request: ScoringRequest) -> int:
         try:
-            counted = self.client.messages.count_tokens(**self._params(request)).input_tokens
+            counted = self.client.messages.count_tokens(
+                **self._params(SYSTEM_PROMPT, request.user_content(), self.model)).input_tokens
         except self._anthropic.APIError:
             counted = rough_token_count(SYSTEM_PROMPT + request.user_content())
         return counted + self.output_tokens_per_segment * len(request.segments)
 
-    def score(self, request: ScoringRequest) -> tuple[ScoringResult, Usage]:
+    def complete_json(self, system: str, user: str, schema: type[T], *,
+                      max_tokens: int = 4000) -> tuple[T, Usage]:
         a = self._anthropic
         try:
             response = self.client.messages.parse(
-                max_tokens=self._max_tokens(request),
-                output_format=ScoringResult,
+                max_tokens=max_tokens,
+                output_format=schema,
                 output_config={"effort": self.effort},
-                **self._params(request),
+                **self._params(system, user, self.model),
             )
         except (a.AuthenticationError, a.PermissionDeniedError, a.NotFoundError, a.BadRequestError) as exc:
             raise AIProviderError(f"Anthropic : {exc}") from exc
@@ -73,10 +74,13 @@ class AnthropicProvider(AIProvider):
             output_tokens=u.output_tokens,
         )
         if response.stop_reason == "refusal":
-            return ScoringResult(segments=[]), usage  # tous les segments vaudront 0
+            raise AIRefusal("Claude a refusé de répondre")
         if response.stop_reason == "max_tokens" or response.parsed_output is None:
             raise RuntimeError(f"réponse incomplète ({response.stop_reason})")
         return response.parsed_output, usage
+
+    def list_models(self) -> list[str]:
+        return [m.id for m in self.client.models.list(limit=100)]
 
 
 class OllamaProvider(AIProvider):
@@ -89,19 +93,16 @@ class OllamaProvider(AIProvider):
         self.model = model or DEFAULT_MODELS["ollama"]
         self.url = url
 
-    def estimate_tokens(self, request: ScoringRequest) -> int:
-        return (rough_token_count(SYSTEM_PROMPT + request.user_content())
-                + self.output_tokens_per_segment * len(request.segments))
-
-    def score(self, request: ScoringRequest) -> tuple[ScoringResult, Usage]:
+    def complete_json(self, system: str, user: str, schema: type[T], *,
+                      max_tokens: int = 4000) -> tuple[T, Usage]:
         body = {
             "model": self.model,
             "stream": False,
-            "format": ScoringResult.model_json_schema(),
-            "options": {"temperature": 0},
+            "format": json_schema(schema),
+            "options": {"temperature": 0, "num_predict": max_tokens},
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": request.user_content()},
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
             ],
         }
         req = urllib.request.Request(f"{self.url}/api/chat", data=json.dumps(body).encode(),
@@ -117,9 +118,16 @@ class OllamaProvider(AIProvider):
             raise RuntimeError(f"Ollama injoignable sur {self.url} : {exc.reason}") from exc
         usage = Usage(data.get("prompt_eval_count", 0), data.get("eval_count", 0))
         try:
-            return ScoringResult.model_validate_json(data["message"]["content"]), usage
+            return schema.model_validate_json(data["message"]["content"]), usage
         except (ValidationError, KeyError) as exc:
             raise RuntimeError(f"JSON invalide renvoyé par Ollama : {exc}") from exc
+
+    def list_models(self) -> list[str]:
+        try:
+            with urllib.request.urlopen(f"{self.url}/api/tags", timeout=10) as resp:
+                return [m["name"] for m in json.load(resp).get("models", [])]
+        except urllib.error.URLError as exc:
+            raise AIProviderError(f"Ollama injoignable sur {self.url}") from exc
 
 
 class FakeProvider(AIProvider):
@@ -131,10 +139,7 @@ class FakeProvider(AIProvider):
     def __init__(self, model: str | None = None) -> None:
         self.model = model or DEFAULT_MODELS["fake"]
         self.calls: list[ScoringRequest] = []
-
-    def estimate_tokens(self, request: ScoringRequest) -> int:
-        return (rough_token_count(SYSTEM_PROMPT + request.user_content())
-                + self.output_tokens_per_segment * len(request.segments))
+        self.json_calls: list[tuple[str, str, type]] = []
 
     def score(self, request: ScoringRequest) -> tuple[ScoringResult, Usage]:
         self.calls.append(request)
@@ -153,16 +158,48 @@ class FakeProvider(AIProvider):
         return output, Usage(rough_token_count(SYSTEM_PROMPT + request.user_content()),
                              rough_token_count(output.model_dump_json()))
 
+    def complete_json(self, system: str, user: str, schema: type[T], *,
+                      max_tokens: int = 4000) -> tuple[T, Usage]:
+        """Les schémas qui veulent un faux résultat exposent `fake(user)`."""
+        self.json_calls.append((system, user, schema))
+        fake = getattr(schema, "fake", None)
+        if fake is None:
+            raise AIProviderError(f"pas de réponse simulée pour {schema.__name__}")
+        output = fake(user)
+        return output, Usage(rough_token_count(system + user), rough_token_count(output.model_dump_json()))
+
+    def list_models(self) -> list[str]:
+        return [self.model]
+
+
+def api_key(provider: str) -> str:
+    creds = secrets.get_json(secrets.credentials_key(provider))
+    if not creds or not creds.get("api_key"):
+        raise AIProviderError(f"clé d'API {provider} absente : Paramètres > Clés d'API")
+    return creds["api_key"]
+
+
+def make_text_provider(provider: str, model: str | None = None, *, effort: str = "low") -> AIProvider:
+    if provider == "fake":
+        return FakeProvider(model)
+    if provider == "anthropic":
+        return AnthropicProvider(model, effort=effort)
+    if provider == "ollama":
+        return OllamaProvider(model)
+    if provider == "gemini":
+        return GeminiProvider(api_key("gemini"), model)
+    if provider == "openai":
+        return OpenAIProvider(api_key("openai"), model)
+    if provider == "mistral":
+        return MistralProvider(api_key("mistral"), model)
+    raise AIProviderError(f"fournisseur d'IA inconnu : {provider!r}")
+
 
 def make_provider(settings: dict, *, dry_run: bool) -> AIProvider | None:
     """Fournisseur configuré pour un bot. En dry run : toujours le faux, aucun appel payant."""
     provider = settings.get("provider", "none")
     if provider == "none":
         return None
-    if dry_run or provider == "fake":
+    if dry_run:
         return FakeProvider()
-    if provider == "anthropic":
-        return AnthropicProvider(settings.get("model"), effort=settings.get("effort", "low"))
-    if provider == "ollama":
-        return OllamaProvider(settings.get("model"))
-    raise AIProviderError(f"fournisseur d'IA inconnu : {provider!r}")
+    return make_text_provider(provider, settings.get("model"), effort=settings.get("effort", "low"))

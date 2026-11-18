@@ -19,6 +19,9 @@ CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
     "anthropic": ("api_key",),
     "twitch": ("client_id", "client_secret"),
     "youtube_data": ("api_key",),  # lecture seule : commentaires horodatés
+    "gemini": ("api_key",),
+    "openai": ("api_key",),
+    "mistral": ("api_key",),
 }
 
 _backend: Any = None  # remplaçable dans les tests

@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS bot (
@@ -236,6 +236,46 @@ CREATE TABLE IF NOT EXISTS alert (
     created_at REAL NOT NULL,
     seen       INTEGER NOT NULL DEFAULT 0,
     UNIQUE (bot_id, kind, day)
+);
+""",
+    3: """
+-- Agent identité : propositions de nom, description, visuels et playlists.
+CREATE TABLE IF NOT EXISTS identity (
+    id            INTEGER PRIMARY KEY,
+    bot_id        INTEGER NOT NULL REFERENCES bot(id) ON DELETE CASCADE,
+    account_id    INTEGER REFERENCES account(id) ON DELETE SET NULL,
+    brief         TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'generating'
+                  CHECK (status IN ('generating', 'ready', 'applying', 'applied', 'failed')),
+    proposal      TEXT,               -- JSON : IdentityProposal
+    choice        TEXT NOT NULL DEFAULT '{}',  -- JSON : ce que l'utilisateur garde
+    images_status TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (images_status IN ('pending', 'generating', 'ready', 'failed')),
+    avatar_path   TEXT,
+    banner_path   TEXT,
+    applied       TEXT NOT NULL DEFAULT '{}',  -- JSON : étapes déjà faites sur YouTube
+    error         TEXT,
+    created_at    REAL NOT NULL,
+    updated_at    REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS playlist (
+    id          INTEGER PRIMARY KEY,
+    bot_id      INTEGER NOT NULL REFERENCES bot(id) ON DELETE CASCADE,
+    account_id  INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    keywords    TEXT NOT NULL DEFAULT '[]',  -- JSON ; vide = tous les Shorts du bot
+    external_id TEXT,
+    created_at  REAL NOT NULL,
+    UNIQUE (bot_id, account_id, title)
+);
+
+CREATE TABLE IF NOT EXISTS playlist_item (
+    playlist_id    INTEGER NOT NULL REFERENCES playlist(id) ON DELETE CASCADE,
+    publish_job_id INTEGER NOT NULL REFERENCES publish_job(id) ON DELETE CASCADE,
+    added_at       REAL NOT NULL,
+    PRIMARY KEY (playlist_id, publish_job_id)
 );
 """,
 }

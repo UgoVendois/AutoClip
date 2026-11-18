@@ -32,6 +32,14 @@ export const JOB_KIND = {
   analyze: 'Analyse',
   render: 'Rendu',
   publish: 'Publication',
+  discover: 'Découverte',
+  presort: 'Tri des moments forts',
+  prepare_window: "Préparation d'un extrait",
+  ai_score: 'Notation IA',
+  identity_generate: 'Identité : proposition',
+  identity_images: 'Identité : visuels',
+  identity_apply: 'Identité : application',
+  playlist_add: 'Ajout en playlist',
 };
 
 const dateFmt = new Intl.DateTimeFormat('fr-FR', {

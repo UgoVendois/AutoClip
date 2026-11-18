@@ -69,7 +69,25 @@ autoclip ai set 1 provider=anthropic daily_token_budget=150000
 autoclip alerts
 ```
 
-Fournisseurs : `anthropic` (Claude, `claude-opus-5-5` par défaut, réglable avec `model=`), `ollama` (local), `fake` (tests). Un bot en dry run utilise toujours le faux fournisseur : aucun appel payant.
+Fournisseurs : `anthropic` (Claude, `claude-opus-5-5` par défaut, réglable avec `model=`), `gemini`, `openai`, `mistral` (clés à enregistrer dans Paramètres > Clés d'API), `ollama` (local), `fake` (tests). Un bot en dry run utilise toujours le faux fournisseur : aucun appel payant.
+
+## Agent identité de chaîne
+
+Onglet **Chaîne** d'un bot : l'IA propose 3 noms, une accroche, une description, des mots-clés, une palette, une photo de profil (800×800), une bannière (2560×1440, texte dans la zone visible sur mobile) et des playlists. Tout est modifiable avant d'appliquer.
+
+- **Appliqué par l'API YouTube** : description, mots-clés, bannière, création des playlists ; ensuite chaque Short publié rejoint les playlists dont un mot-clé apparaît dans son titre ou le nom de la chaîne d'origine (sans mot-clé : tous les Shorts).
+- **À faire à la main** (l'API ne le permet pas) : créer la chaîne, saisir le nom, importer la photo de profil (bouton Télécharger puis YouTube Studio).
+- Fournisseurs (Paramètres > Agent identité) : textes avec Claude, Gemini, ChatGPT, Mistral ou Ollama ; images en dessin vectoriel (SVG écrit par le modèle de texte, rendu par ffmpeg), Gemini (Nano Banana) ou OpenAI (GPT Image). La liste des modèles vient de l'API de chaque fournisseur.
+- Les droits YouTube s'élargissent (`youtube` en plus de l'envoi de vidéos) : une chaîne connectée avant cette version affiche « Reconnecter ».
+- Bot en dry run : l'application sur la chaîne est simulée (`cache/dryrun/channel-*.json`). La génération, lancée à la main, appelle le vrai fournisseur.
+
+```sh
+autoclip identity generate 1 --brief "best-of humour Twitch FR"
+autoclip work                   # ou laisser le démon traiter
+autoclip identity show 1
+autoclip identity apply 1
+autoclip identity models gemini # modèles disponibles avec ta clé
+```
 
 ## Tests
 
