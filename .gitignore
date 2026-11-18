@@ -6,3 +6,7 @@ __pycache__/
 /data/
 *.mp4
 client_secret*.json
+
+# interface construite (npm run build)
+/autoclip/web/
+node_modules/

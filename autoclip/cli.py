@@ -36,6 +36,19 @@ def cmd_daemon(args) -> int:
     return 0
 
 
+def cmd_app(args) -> int:
+    from .app import run_app
+
+    return run_app(args.home, debug=args.debug)
+
+
+def cmd_install_desktop(args) -> int:
+    from .app import install_desktop_entry
+
+    print(f"raccourci créé : {install_desktop_entry()}")
+    return 0
+
+
 def cmd_work(args) -> int:
     rt = _runtime(args)
     rt.ctx.queue.requeue_orphans()
@@ -199,6 +212,12 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--port", type=int, default=API_PORT)
     d.set_defaults(func=cmd_daemon)
 
+    a = sub.add_parser("app", help="ouvre la fenêtre AutoClip (démarre le démon si besoin)")
+    a.add_argument("--debug", action="store_true", help="active l'inspecteur web")
+    a.set_defaults(func=cmd_app)
+    sub.add_parser("install-desktop", help="ajoute AutoClip au lanceur d'applications").set_defaults(
+        func=cmd_install_desktop)
+
     sub.add_parser("work", help="traite la file jusqu'au bout, sans démon").set_defaults(func=cmd_work)
 
     b = sub.add_parser("bot", help="gérer les bots").add_subparsers(dest="action", required=True)
@@ -284,7 +303,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO if args.verbose or args.command == "daemon" else logging.WARNING,
+    logging.basicConfig(level=logging.INFO if args.verbose or args.command in ("daemon", "app") else logging.WARNING,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:
         return args.func(args)

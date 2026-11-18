@@ -12,6 +12,7 @@ dependencies = [
     "google-api-python-client>=2.120",
     "google-auth-oauthlib>=1.2",
     "google-auth-httplib2>=0.2",
+    "pywebview>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +27,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["autoclip*"]
+
+[tool.setuptools.package-data]
+autoclip = ["web/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

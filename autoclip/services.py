@@ -34,6 +34,8 @@ def update_settings(conn: sqlite3.Connection, changes: dict[str, Any]) -> dict[s
         raise ServiceError(f"réglages inconnus : {', '.join(sorted(unknown))}")
     if changes.get("youtube_privacy", "private") not in ("private", "unlisted", "public"):
         raise ServiceError("youtube_privacy : private, unlisted ou public")
+    if changes.get("ui_theme", "system") not in ("system", "light", "dark"):
+        raise ServiceError("ui_theme : system, light ou dark")
     with tx(conn):
         for key, value in changes.items():
             conn.execute(

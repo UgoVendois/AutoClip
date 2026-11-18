@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,41 +35,76 @@ class Runtime:
         return cls(paths, ctx, Worker(ctx, queue, TASKS), Scheduler(conn, queue))
 
 
-def run_daemon(home: Path | None = None, host: str = API_HOST, port: int = API_PORT,
-               tick_seconds: float = 30.0) -> None:
-    import uvicorn
+class Daemon:
+    """Worker + planificateur + API. Peut tourner au premier plan (`autoclip daemon`)
+    ou dans un thread, à l'intérieur de la fenêtre (`autoclip app`)."""
 
-    from .api import create_app
+    def __init__(self, home: Path | None = None, host: str = API_HOST, port: int = API_PORT,
+                 tick_seconds: float = 30.0) -> None:
+        import uvicorn
 
-    # Une connexion par thread : le worker et le planificateur ont chacun la leur.
-    worker_rt = Runtime.open(home)
-    scheduler_rt = Runtime.open(home)
-    orphans = worker_rt.ctx.queue.requeue_orphans()
-    if orphans:
-        log.warning("%d job(s) interrompu(s) au dernier arrêt remis en file", orphans)
+        from .api import create_app
 
-    stop = threading.Event()
+        # Une connexion par thread : le worker et le planificateur ont chacun la leur.
+        self.worker_rt = Runtime.open(home)
+        self.scheduler_rt = Runtime.open(home)
+        self.home = self.worker_rt.paths.home
+        self.tick_seconds = tick_seconds
+        self.stop_event = threading.Event()
+        self.server = uvicorn.Server(uvicorn.Config(create_app(self.home), host=host, port=port,
+                                                    log_level="info"))
+        self.url = f"http://{host}:{port}"
+        self._threads: list[threading.Thread] = []
 
-    def scheduler_loop() -> None:
-        while not stop.is_set():
+    def _scheduler_loop(self) -> None:
+        while not self.stop_event.is_set():
             try:
-                result = scheduler_rt.scheduler.tick()
+                result = self.scheduler_rt.scheduler.tick()
                 if any(result.values()):
                     log.info("planificateur : %s", result)
             except Exception:  # noqa: BLE001
                 log.exception("erreur du planificateur")
-            stop.wait(tick_seconds)
+            self.stop_event.wait(self.tick_seconds)
 
-    threads = [
-        threading.Thread(target=worker_rt.worker.run_forever, args=(stop,), name="worker", daemon=True),
-        threading.Thread(target=scheduler_loop, name="scheduler", daemon=True),
-    ]
-    for t in threads:
-        t.start()
-    log.info("démon AutoClip prêt sur http://%s:%d (données : %s)", host, port, worker_rt.paths.home)
-    try:
-        uvicorn.run(create_app(worker_rt.paths.home), host=host, port=port, log_level="info")
-    finally:
-        stop.set()
-        for t in threads:
-            t.join(timeout=10)
+    def _start_background(self) -> None:
+        orphans = self.worker_rt.ctx.queue.requeue_orphans()
+        if orphans:
+            log.warning("%d job(s) interrompu(s) au dernier arrêt remis en file", orphans)
+        self._threads = [
+            threading.Thread(target=self.worker_rt.worker.run_forever, args=(self.stop_event,),
+                             name="worker", daemon=True),
+            threading.Thread(target=self._scheduler_loop, name="scheduler", daemon=True),
+        ]
+        for t in self._threads:
+            t.start()
+        log.info("démon AutoClip prêt sur %s (données : %s)", self.url, self.home)
+
+    def run(self) -> None:
+        """Au premier plan, jusqu'à Ctrl+C / SIGTERM."""
+        self._start_background()
+        try:
+            self.server.run()
+        finally:
+            self.shutdown()
+
+    def start_in_thread(self, timeout: float = 15.0) -> None:
+        self._start_background()
+        thread = threading.Thread(target=self.server.run, name="api", daemon=True)
+        thread.start()
+        self._threads.append(thread)
+        deadline = time.monotonic() + timeout
+        while not self.server.started:
+            if not thread.is_alive() or time.monotonic() > deadline:
+                raise RuntimeError(f"impossible de démarrer l'API sur {self.url} (port déjà pris ?)")
+            time.sleep(0.05)
+
+    def shutdown(self) -> None:
+        self.stop_event.set()
+        self.server.should_exit = True
+        for t in self._threads:
+            if t is not threading.current_thread():
+                t.join(timeout=10)
+
+
+def run_daemon(home: Path | None = None, host: str = API_HOST, port: int = API_PORT) -> None:
+    Daemon(home, host, port).run()

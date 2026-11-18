@@ -37,6 +37,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "whisper_language": None,  # None = détection automatique
     "youtube_privacy": "private",  # private | unlisted | public
     "default_dry_run": True,
+    "ui_theme": "system",  # system | light | dark
 }
 
 # Paramètres de clipping propres à chaque bot (colonne `bot.clip_settings`).
