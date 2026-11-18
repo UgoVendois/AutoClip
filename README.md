@@ -2,16 +2,26 @@
 
 Démon Linux qui transforme des vidéos longues en Shorts : transcription, choix des meilleurs extraits, recadrage 9:16 avec sous-titres mot à mot, validation manuelle, puis publication planifiée au compte-gouttes sur YouTube Shorts.
 
-Phase 1 (MVP) : backend seul, piloté en ligne de commande ou par l'API locale. L'interface graphique arrive en phase 2.
+Un démon Python fait le travail ; une fenêtre de bureau (Svelte dans pywebview) le pilote : bots, validation des clips, planning, statistiques, clés d'API.
 
 ## Installation
 
+Prérequis système : ffmpeg, Node.js + npm (pour construire l'interface), WebKitGTK (`gir1.2-webkit2-4.1`, présent sur Ubuntu).
+
 ```sh
-uv venv --python 3.12 .venv
+uv venv --system-site-packages .venv      # accès à PyGObject (GTK) du système
 uv pip install -e '.[dev]'
+npm --prefix frontend install && npm --prefix frontend run build
+.venv/bin/autoclip install-desktop        # AutoClip dans le lanceur d'applications
 ```
 
-ffmpeg doit être installé sur le système.
+## Interface
+
+```sh
+.venv/bin/autoclip app        # ouvre la fenêtre (démarre le démon si besoin)
+```
+
+Développement de l'interface avec rechargement à chaud : lancer `autoclip daemon`, puis `npm --prefix frontend run dev`.
 
 ## Essai sans publier
 
@@ -20,7 +30,7 @@ ffmpeg doit être installé sur le système.
 .venv/bin/autoclip dry-run URL --stop-at-review            # s'arrête aux clips à valider
 ```
 
-## Utilisation réelle
+## En ligne de commande
 
 ```sh
 autoclip bot create "Mon bot"                       # dry run par défaut

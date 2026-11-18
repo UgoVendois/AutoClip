@@ -145,7 +145,7 @@ def run_render(ctx: Context, payload: dict) -> dict:
     ).fetchone()
     if clip is None:
         raise PermanentError(f"clip {payload['clip_id']} supprimé")
-    if clip["status"] != "render":
+    if clip["status"] not in ("render", "failed"):  # 'failed' : relance manuelle
         return {"skipped": clip["status"]}
     settings = services.bot_settings(services.get_bot(ctx.conn, clip["bot_id"]))
     style = {k: settings[k] for k in ("subtitle_words", "font", "font_size")}
@@ -155,7 +155,8 @@ def run_render(ctx: Context, payload: dict) -> dict:
                        font=style["font"], font_size=style["font_size"])
     with tx(ctx.conn):
         ctx.conn.execute(
-            "UPDATE clip SET file_path = ?, status = 'review', updated_at = ? WHERE id = ? AND status = 'render'",
+            "UPDATE clip SET file_path = ?, status = 'review', error = NULL, updated_at = ? "
+            "WHERE id = ? AND status IN ('render', 'failed')",
             (str(out), ctx.clock(), clip["id"]),
         )
     return {"file": str(out)}
