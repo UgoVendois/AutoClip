@@ -48,19 +48,91 @@ def _client_config() -> dict:
     }}
 
 
-def connect_account(conn: sqlite3.Connection, open_browser: bool = True) -> int:
-    """Ouvre la page de connexion Google, enregistre le token dans le trousseau
-    et crée (ou met à jour) le compte. Renvoie l'id du compte."""
-    from google_auth_oauthlib.flow import InstalledAppFlow
+HELP_403 = ("Si Google a affiché « Erreur 403 : access_denied », ton projet Google Cloud est en mode Test : "
+            "ajoute ton adresse Gmail dans Google Auth Platform > Audience > Utilisateurs test, puis réessaie.")
+CONNECT_TIMEOUT = 300
+
+
+class OAuthCancelled(Exception):
+    pass
+
+
+class ConnectFlow:
+    """Connexion OAuth d'une chaîne, pilotable depuis l'interface : l'URL Google
+    est connue tout de suite, l'attente du retour a un délai maximum et peut être
+    annulée (Google n'appelle jamais le retour quand il refuse l'accès)."""
+
+    SUCCESS_PAGE = ("<!doctype html><meta charset=utf-8><title>AutoClip</title>"
+                    "<body style='font-family:sans-serif;padding:3em;text-align:center'>"
+                    "<h2>%s</h2><p>Tu peux fermer cet onglet et revenir dans AutoClip.</p>")
+
+    def __init__(self, timeout: float = CONNECT_TIMEOUT) -> None:
+        import wsgiref.simple_server
+
+        from google_auth_oauthlib.flow import InstalledAppFlow
+
+        self.flow = InstalledAppFlow.from_client_config(_client_config(), SCOPES)
+        self._response: str | None = None
+        self._cancelled = False
+        self.deadline = time.time() + timeout
+
+        class QuietHandler(wsgiref.simple_server.WSGIRequestHandler):
+            def log_message(self, *args):  # pas de bruit dans la console
+                pass
+
+        self.server = wsgiref.simple_server.make_server("127.0.0.1", 0, self._wsgi, handler_class=QuietHandler)
+        self.server.timeout = 1
+        self.flow.redirect_uri = f"http://127.0.0.1:{self.server.server_port}/"
+        self.auth_url, _ = self.flow.authorization_url(prompt="consent", access_type="offline")
+
+    def _wsgi(self, environ, start_response):
+        import wsgiref.util
+
+        query = environ.get("QUERY_STRING", "")
+        if "code=" not in query and "error=" not in query:  # favicon, etc.
+            start_response("404 Not Found", [("Content-Type", "text/plain")])
+            return [b""]
+        self._response = wsgiref.util.request_uri(environ)
+        ok = "code=" in query
+        start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
+        message = "Chaîne connectée à AutoClip" if ok else "Connexion refusée"
+        return [(self.SUCCESS_PAGE % message).encode()]
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def wait_credentials(self):
+        """Attend le retour de Google ; lève OAuthCancelled ou PermanentPublishError."""
+        import urllib.parse
+
+        try:
+            while self._response is None:
+                if self._cancelled:
+                    raise OAuthCancelled("connexion annulée")
+                if time.time() > self.deadline:
+                    raise PermanentPublishError(f"Pas de réponse de Google après {CONNECT_TIMEOUT // 60} min. " + HELP_403)
+                self.server.handle_request()
+        finally:
+            self.server.server_close()
+        params = urllib.parse.parse_qs(urllib.parse.urlsplit(self._response).query)
+        if "error" in params:
+            error = params["error"][0]
+            if error == "access_denied":
+                raise PermanentPublishError("Accès refusé sur la page Google. " + HELP_403)
+            raise PermanentPublishError(f"Google a refusé la connexion ({error}).")
+        # oauthlib exige https, même pour le retour local.
+        self.flow.fetch_token(authorization_response=self._response.replace("http://", "https://", 1))
+        return self.flow.credentials
+
+
+def save_connected_account(conn: sqlite3.Connection, creds) -> int:
+    """Enregistre le jeton dans le trousseau et crée (ou met à jour) le compte."""
     from googleapiclient.discovery import build
 
-    flow = InstalledAppFlow.from_client_config(_client_config(), SCOPES)
-    creds = flow.run_local_server(port=0, open_browser=open_browser,
-                                  prompt="consent", access_type="offline")
     youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
     channels = youtube.channels().list(part="snippet", mine=True).execute().get("items", [])
     if not channels:
-        raise PermanentPublishError("ce compte Google n'a pas de chaîne YouTube")
+        raise PermanentPublishError("Ce compte Google n'a pas de chaîne YouTube : crée-la sur youtube.com, puis réessaie.")
     channel = channels[0]
     ref = f"token:youtube:{channel['id']}"
     secrets.set(ref, creds.to_json())
@@ -72,6 +144,17 @@ def connect_account(conn: sqlite3.Connection, open_browser: bool = True) -> int:
             (channel["snippet"]["title"], ref, time.time()),
         )
         return conn.execute("SELECT id FROM account WHERE keyring_ref = ?", (ref,)).fetchone()["id"]
+
+
+def connect_account(conn: sqlite3.Connection, open_browser: bool = True) -> int:
+    """Connexion bloquante (CLI) : ouvre la page Google et attend le retour."""
+    import webbrowser
+
+    flow = ConnectFlow()
+    print(f"Page de connexion Google : {flow.auth_url}")
+    if open_browser:
+        webbrowser.open(flow.auth_url, new=1)
+    return save_connected_account(conn, flow.wait_credentials())
 
 
 def _marker(token: str) -> str:

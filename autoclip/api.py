@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
@@ -430,24 +431,58 @@ def create_app(home: Path) -> FastAPI:
             out.append(item)
         return out
 
+    youtube_connect: dict[str, Any] = {}
+
     @api.post("/accounts/{platform}/connect")
-    async def connect(platform: str):
-        """Ouvre la connexion OAuth dans le navigateur et attend son retour."""
+    def connect(platform: str):
+        """Démarre la connexion OAuth : renvoie l'URL Google tout de suite, le retour
+        est attendu en arrière-plan (GET pour suivre, DELETE pour annuler)."""
         if platform != "youtube":
             raise HTTPException(400, f"{platform} n'est pas encore pris en charge (youtube uniquement)")
-        from .publishers.youtube import connect_account
+        import threading
+        import webbrowser
 
-        def _connect() -> int:
-            conn = db.connect(paths.db)
-            try:
-                return connect_account(conn)
-            finally:
-                conn.close()
+        from .publishers.youtube import ConnectFlow, OAuthCancelled, save_connected_account
 
+        if (old := youtube_connect.get("flow")) is not None:
+            old.cancel()
         try:
-            return {"id": await run_in_threadpool(_connect)}
-        except Exception as exc:  # noqa: BLE001
+            flow = ConnectFlow()
+        except Exception as exc:  # noqa: BLE001 : clés absentes...
             raise HTTPException(400, str(exc)) from exc
+        youtube_connect.clear()
+        youtube_connect.update(flow=flow, state="pending", auth_url=flow.auth_url)
+
+        def wait():
+            try:
+                creds = flow.wait_credentials()
+                conn = db.connect(paths.db)
+                try:
+                    account_id = save_connected_account(conn, creds)
+                finally:
+                    conn.close()
+                if youtube_connect.get("flow") is flow:
+                    youtube_connect.update(state="connected", account_id=account_id)
+            except OAuthCancelled:
+                if youtube_connect.get("flow") is flow:
+                    youtube_connect.update(state="cancelled")
+            except Exception as exc:  # noqa: BLE001
+                if youtube_connect.get("flow") is flow:
+                    youtube_connect.update(state="error", error=str(exc))
+
+        threading.Thread(target=wait, daemon=True, name="youtube-oauth").start()
+        webbrowser.open(flow.auth_url, new=1)
+        return {"auth_url": flow.auth_url, "timeout": int(flow.deadline - time.time())}
+
+    @api.get("/accounts/{platform}/connect")
+    def connect_status(platform: str):
+        return {k: v for k, v in youtube_connect.items() if k != "flow"} or {"state": "idle"}
+
+    @api.delete("/accounts/{platform}/connect")
+    def connect_cancel(platform: str):
+        if (flow := youtube_connect.get("flow")) is not None:
+            flow.cancel()
+        return {"ok": True}
 
     @api.delete("/accounts/{account_id}")
     def delete_account(account_id: int, conn=Depends(get_conn)):

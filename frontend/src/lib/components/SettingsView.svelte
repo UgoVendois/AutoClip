@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { api } from '../api.js';
   import { app, askConfirm, run, toast } from '../state.svelte.js';
   import Icon from './Icon.svelte';
@@ -234,12 +234,53 @@
     e.target.value = '';
   }
 
+  // Connexion OAuth : l'URL Google arrive tout de suite, on suit ensuite l'état.
+  let oauth = $state(null); // { auth_url, remaining, error }
+  let oauthTimer = null;
+
+  function stopPolling() {
+    clearInterval(oauthTimer);
+    oauthTimer = null;
+    connecting = false;
+  }
+
   async function connectYoutube() {
     connecting = true;
-    const result = await run(api.post('/accounts/youtube/connect'), 'Chaîne YouTube connectée');
-    connecting = false;
-    if (result) loadAccounts();
+    const started = await run(api.post('/accounts/youtube/connect'));
+    if (!started) {
+      connecting = false;
+      return;
+    }
+    oauth = { auth_url: started.auth_url, remaining: started.timeout, error: null };
+    oauthTimer = setInterval(async () => {
+      oauth.remaining = Math.max(0, oauth.remaining - 1.5);
+      let st;
+      try {
+        st = await api.get('/accounts/youtube/connect');
+      } catch {
+        return;
+      }
+      if (st.state === 'pending') return;
+      stopPolling();
+      if (st.state === 'connected') {
+        oauth = null;
+        toast('Chaîne YouTube connectée', 'success');
+        loadAccounts();
+      } else if (st.state === 'error') {
+        oauth = { ...oauth, error: st.error };
+      } else {
+        oauth = null;
+      }
+    }, 1500);
   }
+
+  async function cancelConnect() {
+    await run(api.del('/accounts/youtube/connect'));
+    stopPolling();
+    oauth = null;
+  }
+
+  onDestroy(() => clearInterval(oauthTimer));
 
   async function removeAccount(account) {
     const ok = await askConfirm({
@@ -473,11 +514,42 @@
           Connecter une chaîne YouTube
         </button>
         {#if connecting}
-          <p class="text-sm text-muted">Une page Google s'est ouverte dans ton navigateur : autorise l'accès puis reviens ici.</p>
+          <button class="btn" onclick={cancelConnect}><Icon name="x" /> Annuler</button>
         {:else if creds && !creds.configured.youtube}
           <p class="text-sm text-muted">Enregistre d'abord les clés YouTube ci-dessus.</p>
         {/if}
       </div>
+      {#if oauth}
+        <div class="mt-4 rounded-xl border px-4 py-3 text-sm {oauth.error ? 'border-[var(--danger)] bg-[var(--danger-soft)]' : 'border-line bg-surface-2'}">
+          {#if oauth.error}
+            <p class="flex items-start gap-2 font-medium text-danger"><Icon name="alert" size={15} class="mt-0.5 shrink-0" />{oauth.error}</p>
+          {:else}
+            <p>
+              Une page Google s'est ouverte dans ton navigateur : choisis le compte de la chaîne et autorise l'accès.
+              <span class="text-faint">(attente encore {Math.ceil(oauth.remaining / 60)} min)</span>
+            </p>
+            <a class="mt-1 inline-flex items-center gap-1 font-medium text-accent hover:underline" href={oauth.auth_url} target="_blank" rel="noreferrer">
+              Rouvrir la page Google <Icon name="external" size={12} />
+            </a>
+          {/if}
+          <details class="mt-3 text-muted" open={Boolean(oauth.error)}>
+            <summary class="cursor-pointer font-medium text-ink">Google affiche « Erreur 403 : access_denied » ?</summary>
+            <ol class="mt-2 list-decimal space-y-1 pl-5">
+              <li>Ton projet Google Cloud est en mode <strong>Test</strong> : seuls les comptes listés comme testeurs peuvent se connecter.</li>
+              <li>
+                Ouvre
+                <a class="font-medium text-accent hover:underline" href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noreferrer">Google Auth Platform › Audience</a>,
+                section <strong>Utilisateurs test</strong>, et ajoute l'adresse Gmail propriétaire de ta chaîne YouTube.
+              </li>
+              <li>Clique sur Annuler ici, puis sur « Connecter une chaîne YouTube ».</li>
+            </ol>
+            <p class="mt-2">« Cette application n'a pas été validée par Google » : clique sur Paramètres avancés, puis « Accéder à AutoClip ». C'est normal pour ton propre projet.</p>
+          </details>
+          {#if oauth.error}
+            <button class="btn btn-sm mt-3" onclick={() => (oauth = null)}>Fermer</button>
+          {/if}
+        </div>
+      {/if}
     </Section>
 
     {#if status}
