@@ -1,0 +1,18 @@
+# Installation :
+#   mkdir -p ~/.config/systemd/user && cp systemd/autoclip.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now autoclip
+# Journal : journalctl --user -u autoclip -f
+[Unit]
+Description=AutoClip : démon de clipping et de publication de Shorts
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Github/Side_project/AutoClip
+ExecStart=%h/Github/Side_project/AutoClip/.venv/bin/autoclip daemon
+Restart=on-failure
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=default.target
