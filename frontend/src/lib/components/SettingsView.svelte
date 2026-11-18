@@ -7,10 +7,42 @@
   import ThemeSwitch from './ThemeSwitch.svelte';
 
   const PLATFORMS = {
-    youtube: { name: 'YouTube', help: 'Identifiant OAuth « Application de bureau » d\'un projet Google Cloud avec l\'API YouTube Data v3 activée.' },
-    tiktok: { name: 'TikTok', help: 'Clés d\'une app TikTok for Developers (Content Posting API). Connecteur prévu dans une prochaine phase.' },
-    instagram: { name: 'Instagram', help: 'App Meta avec l\'API Instagram Graph. Connecteur prévu dans une prochaine phase.' },
-    anthropic: { name: 'Anthropic (Claude)', help: 'Clé d\'API pour choisir les extraits avec un modèle de langage. Fonction prévue plus tard.' },
+    youtube: {
+      name: 'YouTube',
+      help: "Identifiant OAuth « Application de bureau » d'un projet Google Cloud avec l'API YouTube Data v3 activée.",
+      url: 'https://console.cloud.google.com/apis/credentials',
+      urlLabel: 'Google Cloud Console',
+    },
+    youtube_data: {
+      name: 'YouTube (lecture des commentaires)',
+      help: "Facultatif. Clé d'API du même projet Google Cloud, pour repérer les moments cités dans les commentaires.",
+      url: 'https://console.cloud.google.com/apis/credentials',
+      urlLabel: 'Google Cloud Console',
+    },
+    twitch: {
+      name: 'Twitch',
+      help: "Client ID et Client Secret d'une application Twitch, pour trouver les VODs et lire le chat des lives.",
+      url: 'https://dev.twitch.tv/console/apps',
+      urlLabel: 'Twitch Developer Console',
+    },
+    tiktok: {
+      name: 'TikTok',
+      help: "Clés d'une app TikTok for Developers (Content Posting API). Connecteur prévu dans une prochaine phase.",
+      url: 'https://developers.tiktok.com/apps',
+      urlLabel: 'TikTok for Developers',
+    },
+    instagram: {
+      name: 'Instagram',
+      help: "App Meta avec l'API Instagram Graph. Connecteur prévu dans une prochaine phase.",
+      url: 'https://developers.facebook.com/apps',
+      urlLabel: 'Meta for Developers',
+    },
+    anthropic: {
+      name: 'Anthropic (Claude)',
+      help: "Clé d'API pour noter les extraits et rédiger titres et descriptions.",
+      url: 'https://platform.claude.com/settings/keys',
+      urlLabel: 'Claude Console',
+    },
   };
   const FIELD_LABELS = {
     client_id: 'Client ID',
@@ -194,7 +226,17 @@
                 <Icon name="plus" size={14} class="ml-auto text-faint transition-transform group-open:rotate-45" />
               </summary>
               <div class="border-t border-line px-4 pb-4 pt-3">
-                <p class="mb-3 text-sm text-muted">{PLATFORMS[platform]?.help}</p>
+                <p class="mb-3 text-sm text-muted">
+                  {PLATFORMS[platform]?.help}
+                  {#if PLATFORMS[platform]?.url}
+                    <a
+                      class="inline-flex items-center gap-1 font-medium text-accent hover:underline"
+                      href={PLATFORMS[platform].url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >{PLATFORMS[platform].urlLabel}<Icon name="external" size={12} /></a>
+                  {/if}
+                </p>
                 {#if forms[platform]}
                   <form class="grid gap-3 md:grid-cols-2" onsubmit={(e) => { e.preventDefault(); saveCreds(platform); }}>
                     {#each fields as field}
