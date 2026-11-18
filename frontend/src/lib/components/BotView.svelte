@@ -4,6 +4,7 @@
   import { app, toast } from '../state.svelte.js';
   import ChannelTab from './ChannelTab.svelte';
   import ConfigTab from './ConfigTab.svelte';
+  import DiscoveryTab from './DiscoveryTab.svelte';
   import Icon from './Icon.svelte';
   import QueueTab from './QueueTab.svelte';
   import StatsTab from './StatsTab.svelte';
@@ -30,6 +31,7 @@
 
   const TABS = [
     { id: 'config', label: 'Configuration', icon: 'sliders' },
+    { id: 'discovery', label: 'Découverte', icon: 'radar' },
     { id: 'queue', label: "File d'attente", icon: 'list' },
     { id: 'channel', label: 'Chaîne', icon: 'palette' },
     { id: 'stats', label: 'Statistiques', icon: 'chart' },
@@ -71,6 +73,8 @@
         <ConfigTab {bot} reload={load} />
       {:else if app.tab === 'queue'}
         <QueueTab {bot} {tick} reload={load} />
+      {:else if app.tab === 'discovery'}
+        <DiscoveryTab {bot} {tick} reload={load} />
       {:else if app.tab === 'channel'}
         <ChannelTab {bot} {tick} />
       {:else}

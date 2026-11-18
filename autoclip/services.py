@@ -91,6 +91,14 @@ def _check_ai_settings(values: dict[str, Any]) -> None:
         raise ServiceError("max_windows : entre 1 et 30")
     if not 0 <= merged["min_score"] <= 100:
         raise ServiceError("min_score : entre 0 et 100")
+    if not set(merged["scout_platforms"]) <= {"twitch", "youtube"}:
+        raise ServiceError("scout_platforms : twitch et/ou youtube")
+    if not 1 <= merged["scout_max_channels"] <= 30:
+        raise ServiceError("scout_max_channels : entre 1 et 30")
+    if not 1 <= merged["scout_every_hours"] <= 24 * 7:
+        raise ServiceError("scout_every_hours : entre 1 et 168")
+    if merged["scout_enabled"] and not str(merged["scout_theme"]).strip():
+        raise ServiceError("décris un thème pour que l'IA cherche des chaînes")
 
 
 def update_bot(conn: sqlite3.Connection, bot_id: int, *, name: str | None = None,
@@ -320,17 +328,37 @@ def add_watch(conn: sqlite3.Connection, bot_id: int, platform: str, channel: str
             """INSERT INTO watch (bot_id, platform, channel, interval_minutes, created_at)
                VALUES (?, ?, ?, ?, ?)
                ON CONFLICT (bot_id, platform, channel) DO UPDATE SET
-                   interval_minutes = excluded.interval_minutes, enabled = 1""",
+                   interval_minutes = excluded.interval_minutes, enabled = 1, dismissed = 0,
+                   origin = 'manual'""",
             (bot_id, platform, channel, interval_minutes, time.time()))
         return conn.execute("SELECT id FROM watch WHERE bot_id = ? AND platform = ? AND channel = ?",
                             (bot_id, platform, channel)).fetchone()["id"]
 
 
 def remove_watch(conn: sqlite3.Connection, watch_id: int) -> None:
+    """Supprime une chaîne surveillée. Une chaîne trouvée par l'IA est seulement
+    écartée, pour que l'éclaireur ne la repropose pas."""
     with tx(conn):
-        cur = conn.execute("DELETE FROM watch WHERE id = ?", (watch_id,))
-    if cur.rowcount != 1:
-        raise ServiceError(f"surveillance {watch_id} introuvable")
+        row = conn.execute("SELECT origin FROM watch WHERE id = ?", (watch_id,)).fetchone()
+        if row is None:
+            raise ServiceError(f"surveillance {watch_id} introuvable")
+        if row["origin"] == "ai":
+            conn.execute("UPDATE watch SET dismissed = 1, enabled = 0 WHERE id = ?", (watch_id,))
+        else:
+            conn.execute("DELETE FROM watch WHERE id = ?", (watch_id,))
+
+
+def update_watch(conn: sqlite3.Connection, watch_id: int, *, enabled: bool | None = None,
+                 interval_minutes: int | None = None) -> None:
+    with tx(conn):
+        if conn.execute("SELECT 1 FROM watch WHERE id = ? AND dismissed = 0", (watch_id,)).fetchone() is None:
+            raise ServiceError(f"surveillance {watch_id} introuvable")
+        if interval_minutes is not None:
+            if interval_minutes < 5:
+                raise ServiceError("vérification au plus toutes les 5 minutes")
+            conn.execute("UPDATE watch SET interval_minutes = ? WHERE id = ?", (interval_minutes, watch_id))
+        if enabled is not None:
+            conn.execute("UPDATE watch SET enabled = ? WHERE id = ?", (int(enabled), watch_id))
 
 
 def list_alerts(conn: sqlite3.Connection, *, unseen_only: bool = False) -> list[sqlite3.Row]:

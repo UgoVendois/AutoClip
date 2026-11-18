@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import re
+import time
+import urllib.error
 import sqlite3
 import urllib.parse
 import urllib.request
@@ -20,7 +22,7 @@ from datetime import datetime
 from .. import secrets
 from ..jobs.queue import PermanentError
 from ..signals.peaks import comment_timestamps
-from .base import DiscoveredItem, Signal, SourceDiscoverer, register
+from .base import ChannelCandidate, DiscoveredItem, Signal, SourceDiscoverer, register
 
 FEED = "https://www.youtube.com/feeds/videos.xml?channel_id={}"
 API = "https://www.googleapis.com/youtube/v3"
@@ -97,3 +99,31 @@ class YouTubeDiscoverer(SourceDiscoverer):
                 break
         events = comment_timestamps(texts, item.duration)
         return Signal("comments", events) if len(events) >= MIN_TIMESTAMPED_COMMENTS else None
+
+    def search_channels(self, *, categories: list[str], keywords: list[str], language: str,
+                        limit: int = 40) -> list[ChannelCandidate]:
+        """Vidéos récentes les plus vues sur le thème -> leurs chaînes (YouTube Data API,
+        `search.list` : 100 unités de quota par recherche, donc 2 recherches au plus)."""
+        creds = secrets.get_json(secrets.credentials_key("youtube_data"))
+        if not creds:
+            return []  # sans clé de lecture : pas de recherche YouTube
+        found: dict[str, ChannelCandidate] = {}
+        after = datetime.fromtimestamp(time.time() - 14 * 86400).astimezone().isoformat(timespec="seconds")
+        for query in [*keywords, *categories][:2]:
+            params = {"part": "snippet", "q": query, "type": "video", "order": "viewCount", "maxResults": 25,
+                      "publishedAfter": after, "key": creds["api_key"]}
+            if language:
+                params["relevanceLanguage"] = language
+            try:
+                data = json.loads(_get(f"{API}/search?{urllib.parse.urlencode(params)}"))
+            except urllib.error.HTTPError as exc:
+                if exc.code == 403:  # quota épuisé ou clé refusée : on garde le reste
+                    break
+                raise
+            for item in data.get("items", []):
+                sn = item["snippet"]
+                found.setdefault(sn["channelId"], ChannelCandidate(
+                    platform="youtube", channel=sn["channelId"], channel_id=sn["channelId"],
+                    name=sn.get("channelTitle", ""), title=sn.get("title", ""), category=query,
+                    language=language, live=sn.get("liveBroadcastContent") == "live"))
+        return list(found.values())[:limit]

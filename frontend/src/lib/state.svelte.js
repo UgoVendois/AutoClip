@@ -5,7 +5,7 @@ export const app = $state({
   bots: [],
   selectedId: null,
   view: 'bot', // 'bot' | 'settings'
-  tab: 'config', // 'config' | 'queue' | 'channel' | 'stats'
+  tab: 'config', // 'config' | 'discovery' | 'queue' | 'channel' | 'stats'
   settings: null,
   inWindow: false, // true dans la fenêtre pywebview (sélecteur de fichiers natif)
   toasts: [],

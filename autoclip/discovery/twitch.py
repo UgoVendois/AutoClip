@@ -23,7 +23,7 @@ from pathlib import Path
 from .. import secrets
 from ..db import tx
 from ..jobs.queue import PermanentError
-from .base import DiscoveredItem, Signal, SourceDiscoverer, register
+from .base import ChannelCandidate, DiscoveredItem, Signal, SourceDiscoverer, register
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +135,33 @@ class TwitchDiscoverer(SourceDiscoverer):
         # La VOD commence au début du live : created_at de la VOD = instant 0.
         events = [r["ts"] - item.published_at for r in rows]
         return Signal("chat", [e for e in events if e >= 0])
+
+    def search_channels(self, *, categories: list[str], keywords: list[str], language: str,
+                        limit: int = 40) -> list[ChannelCandidate]:
+        """Lives en cours dans les catégories (jeux) du thème, triés par spectateurs,
+        puis chaînes correspondant aux mots-clés. API Helix officielle uniquement."""
+        found: dict[str, ChannelCandidate] = {}
+        lang = language or None
+        for name in categories[:3]:
+            games = self.helix.get("/search/categories", query=name, first=5).get("data", [])
+            exact = [g for g in games if g["name"].casefold() == name.casefold()]
+            for game in (exact or games)[:1]:
+                streams = self.helix.get("/streams", game_id=game["id"], language=lang, first=50).get("data", [])
+                for st in streams:
+                    found.setdefault(st["user_id"], ChannelCandidate(
+                        platform="twitch", channel=st["user_login"], channel_id=st["user_id"],
+                        name=st["user_name"], title=st.get("title", ""), category=st.get("game_name", ""),
+                        language=st.get("language", ""), viewers=st.get("viewer_count", 0), live=True))
+        for kw in keywords[:3]:
+            for ch in self.helix.get("/search/channels", query=kw, first=20).get("data", []):
+                if lang and ch.get("broadcaster_language") not in (lang, None, ""):
+                    continue
+                found.setdefault(ch["id"], ChannelCandidate(
+                    platform="twitch", channel=ch["broadcaster_login"], channel_id=ch["id"],
+                    name=ch.get("display_name", ch["broadcaster_login"]), title=ch.get("title", ""),
+                    category=ch.get("game_name", ""), language=ch.get("broadcaster_language", ""),
+                    live=bool(ch.get("is_live"))))
+        return sorted(found.values(), key=lambda c: (-c.live, -c.viewers))[:limit]
 
 
 # -- connexion du compte (Device Code Flow) -------------------------------------

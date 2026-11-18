@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS bot (
@@ -282,6 +282,26 @@ CREATE TABLE IF NOT EXISTS playlist_item (
 -- Clips viraux : texte d'accroche incrusté, instant du pic de chat par fenêtre.
 ALTER TABLE clip ADD COLUMN hook TEXT NOT NULL DEFAULT '';
 ALTER TABLE candidate_window ADD COLUMN peak REAL;
+""",
+    5: """
+-- Éclaireur IA : chaînes trouvées automatiquement à partir d'un thème.
+ALTER TABLE watch ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual';  -- manual | ai
+ALTER TABLE watch ADD COLUMN reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE watch ADD COLUMN score INTEGER;
+-- Chaîne proposée par l'IA puis retirée par l'utilisateur : jamais reproposée.
+ALTER TABLE watch ADD COLUMN dismissed INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS scout_run (
+    id          INTEGER PRIMARY KEY,
+    bot_id      INTEGER NOT NULL REFERENCES bot(id) ON DELETE CASCADE,
+    status      TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'done', 'failed')),
+    plan        TEXT,               -- JSON : recherches lancées
+    candidates  INTEGER NOT NULL DEFAULT 0,
+    added       TEXT NOT NULL DEFAULT '[]',  -- JSON : chaînes ajoutées
+    error       TEXT,
+    created_at  REAL NOT NULL,
+    finished_at REAL
+);
 """,
 }
 

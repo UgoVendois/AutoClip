@@ -142,7 +142,7 @@
 </script>
 
 <div class="space-y-5">
-  <Section title="Sources" icon="film" description="Une vidéo YouTube (ou tout site pris en charge par yt-dlp), ou un fichier de ton ordinateur.">
+  <Section title="Sources" icon="film" description="Une vidéo précise à découper : lien YouTube (ou tout site pris en charge par yt-dlp), ou fichier de ton ordinateur. Pour que l'IA trouve elle-même les chaînes à clipper, va dans l'onglet Découverte.">
     <form class="flex gap-2" onsubmit={(e) => { e.preventDefault(); addSource(); }}>
       <input class="input" placeholder="https://www.youtube.com/watch?v=… ou /chemin/vers/video.mp4" bind:value={newSource} />
       {#if app.inWindow}

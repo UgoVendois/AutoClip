@@ -71,6 +71,14 @@ autoclip alerts
 
 Fournisseurs : `anthropic` (Claude, `claude-opus-5-5` par défaut, réglable avec `model=`), `gemini`, `openai`, `mistral` (clés à enregistrer dans Paramètres > Clés d'API), `ollama` (local), `fake` (tests). Un bot en dry run utilise toujours le faux fournisseur : aucun appel payant.
 
+## Onglet Découverte : l'IA trouve les sources
+
+- **Éclaireur IA** : décris un thème (« GTA 6, streamers FR »). L'IA en tire des recherches (catégories Twitch, mots-clés, requêtes YouTube), les API officielles listent les chaînes actives (lives Twitch triés par spectateurs, vidéos YouTube récentes les plus vues), puis l'IA choisit les meilleures pour le clipping, avec une raison. Recherche relancée automatiquement (toutes les 24 h par défaut). Une chaîne retirée n'est jamais reproposée ; l'IA comble la place libérée.
+- Sans IA (fournisseur « Aucune ») : le thème sert de recherche et les chaînes les plus regardées sont retenues.
+- La recherche YouTube utilise la clé « YouTube (lecture des commentaires) » (100 unités de quota par recherche, 2 au plus).
+- Même onglet : chaînes surveillées (ajout manuel, pause, fréquence), connexion Twitch pour le chat en direct, IA de notation (fournisseur, modèle, budget, score minimal, images), contenus trouvés et leur état.
+- En ligne de commande : `autoclip ai set BOT scout_theme="GTA 6" scout_enabled=true`, puis `autoclip scout BOT`.
+
 ## Clips viraux (jeu vidéo, streams)
 
 - **Mise en page** (Configuration > Découpage) : automatique (facecam en haut et jeu en bas si une webcam est détectée, sinon jeu entier sur fond flouté), facecam + jeu, fond flouté, ou recadrage central. La webcam est repérée localement (modèle YuNet fourni, OpenCV) : un visage qui reste au même endroit.

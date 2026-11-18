@@ -113,7 +113,10 @@ class Scheduler:
                         break
             from .discovery_tasks import enqueue_due_discoveries, resume_deferred
 
+            from .scout import enqueue_due_scouts
+
             discoveries = enqueue_due_discoveries(self.conn, self.queue, now)
+            discoveries += enqueue_due_scouts(self.conn, self.queue, now)
             resumed = resume_deferred(self.conn, self.queue, now)
         result = {"planned": planned, "dispatched": dispatched}
         if discoveries or resumed:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from datetime import datetime, timedelta
@@ -32,6 +33,11 @@ class BotPatch(BaseModel):
     dry_run: bool | None = None
     clip_settings: dict[str, Any] | None = None
     ai_settings: dict[str, Any] | None = None
+
+
+class WatchPatch(BaseModel):
+    enabled: bool | None = None
+    interval_minutes: int | None = None
 
 
 class WatchIn(BaseModel):
@@ -130,7 +136,8 @@ def create_app(home: Path) -> FastAPI:
         bot["schedule"] = dict(sched) if sched else None
         bot["stats"] = services.bot_stats(conn, bot_id)
         bot["ai_settings"] = services.ai_settings(row)
-        bot["watches"] = _rows(conn.execute("SELECT * FROM watch WHERE bot_id = ? ORDER BY id", (bot_id,)))
+        bot["watches"] = _rows(conn.execute("SELECT * FROM watch WHERE bot_id = ? AND dismissed = 0 ORDER BY id",
+                                            (bot_id,)))
         return bot
 
     @api.patch("/bots/{bot_id}")
@@ -191,7 +198,40 @@ def create_app(home: Path) -> FastAPI:
     @api.get("/bots/{bot_id}/watches")
     def watches(bot_id: int, conn=Depends(get_conn)):
         guard(services.get_bot, conn, bot_id)
-        return _rows(conn.execute("SELECT * FROM watch WHERE bot_id = ? ORDER BY id", (bot_id,)))
+        return _rows(conn.execute("SELECT * FROM watch WHERE bot_id = ? AND dismissed = 0 ORDER BY id", (bot_id,)))
+
+    @api.patch("/watches/{watch_id}")
+    def patch_watch(watch_id: int, body: WatchPatch, conn=Depends(get_conn)):
+        guard(services.update_watch, conn, watch_id, **body.model_dump())
+        return {"ok": True}
+
+    @api.post("/bots/{bot_id}/discover")
+    def discover_now(bot_id: int, conn=Depends(get_conn)):
+        """Vérifie tout de suite les chaînes surveillées du bot."""
+        guard(services.get_bot, conn, bot_id)
+        queue, now = JobQueue(conn), time.time()
+        rows = conn.execute("SELECT id FROM watch WHERE bot_id = ? AND enabled = 1 AND dismissed = 0", (bot_id,)).fetchall()
+        for w in rows:
+            queue.enqueue("discover", {"watch_id": w["id"]}, key=f"discover:{w['id']}:now:{int(now)}")
+        return {"watches": len(rows)}
+
+    @api.post("/bots/{bot_id}/scout")
+    def scout_now(bot_id: int, conn=Depends(get_conn)):
+        from . import scout
+
+        guard(scout.start, conn, JobQueue(conn), bot_id)
+        return {"ok": True}
+
+    @api.get("/bots/{bot_id}/scout")
+    def scout_runs(bot_id: int, conn=Depends(get_conn)):
+        guard(services.get_bot, conn, bot_id)
+        runs = _rows(conn.execute("SELECT * FROM scout_run WHERE bot_id = ? ORDER BY id DESC LIMIT 5", (bot_id,)))
+        for r in runs:
+            r["plan"] = json.loads(r["plan"]) if r["plan"] else None
+            r["added"] = json.loads(r["added"])
+        pending = conn.execute("SELECT COUNT(*) FROM job WHERE kind = 'scout' AND status IN ('queued', 'running') "
+                               "AND json_extract(payload, '$.bot_id') = ?", (bot_id,)).fetchone()[0]
+        return {"runs": runs, "pending": bool(pending)}
 
     @api.post("/bots/{bot_id}/watches", status_code=201)
     def add_watch(bot_id: int, body: WatchIn, conn=Depends(get_conn)):

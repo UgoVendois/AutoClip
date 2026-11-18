@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 LEASES = {"ingest": 3 * 3600, "transcribe": 6 * 3600, "analyze": 600, "render": 3600,
           "publish": 3600, "discover": 600, "presort": 2 * 3600, "prepare_window": 3600,
           "ai_score": 1800, "identity_generate": 900, "identity_images": 1800,
-          "identity_apply": 1800, "playlist_add": 600}
+          "identity_apply": 1800, "playlist_add": 600, "scout": 900}
 
 
 @dataclass
@@ -276,8 +276,9 @@ def dead_publish(ctx: Context, payload: dict, error: str) -> None:
 def _discovery_tasks() -> dict[str, Task]:
     from .discovery_tasks import DISCOVERY_TASKS
     from .identity import IDENTITY_TASKS
+    from .scout import SCOUT_TASKS
 
-    return {**DISCOVERY_TASKS, **IDENTITY_TASKS}
+    return {**DISCOVERY_TASKS, **IDENTITY_TASKS, **SCOUT_TASKS}
 
 
 TASKS: dict[str, Task] = {

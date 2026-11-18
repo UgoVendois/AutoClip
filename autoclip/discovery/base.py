@@ -22,6 +22,26 @@ class DiscoveredItem:
     live: bool = False  # encore en cours : à reprendre plus tard
 
 
+@dataclass(frozen=True)
+class ChannelCandidate:
+    """Chaîne trouvée par une recherche (éclaireur IA)."""
+
+    platform: str
+    channel: str  # pseudo (Twitch) ou identifiant UC... (YouTube) : ce qui sera surveillé
+    channel_id: str
+    name: str
+    title: str = ""  # titre du live ou de la vidéo trouvée
+    category: str = ""
+    language: str = ""
+    viewers: int = 0  # spectateurs en direct (Twitch) ou vues de la vidéo trouvée (YouTube)
+    live: bool = False
+
+    def brief(self) -> dict:
+        return {"platform": self.platform, "channel_id": self.channel_id, "name": self.name,
+                "title": self.title[:120], "category": self.category, "language": self.language,
+                "viewers": self.viewers, "live": self.live}
+
+
 @dataclass
 class Signal:
     kind: str  # chat | comments | audio
@@ -46,6 +66,11 @@ class SourceDiscoverer(ABC):
     def signal(self, conn: sqlite3.Connection, item: DiscoveredItem) -> Signal | None:
         """Événements horodatés (chat, commentaires) ; None = rien d'exploitable."""
         return None
+
+    def search_channels(self, *, categories: list[str], keywords: list[str], language: str,
+                        limit: int = 40) -> list[ChannelCandidate]:
+        """Chaînes actives sur un thème (éclaireur). Par défaut : non pris en charge."""
+        return []
 
     def download_section(self, item: DiscoveredItem, start: float, end: float, dest: Path) -> Path:
         """Télécharge uniquement [start, end] de la vidéo."""

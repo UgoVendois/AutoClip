@@ -76,6 +76,13 @@ DEFAULT_AI_SETTINGS: dict[str, object] = {
     "backfill_hours": 48,  # à l'ajout d'une chaîne : contenus récents à reprendre
     "vision": True,  # images clés envoyées à l'IA (action à l'écran, pas seulement la parole)
     "chat_delay_seconds": 8,  # retard du chat sur l'action (latence du live + temps de réaction)
+    # Éclaireur : l'IA trouve elle-même les chaînes à surveiller à partir d'un thème.
+    "scout_enabled": False,
+    "scout_theme": "",  # ex. « GTA 6, streamers français, moments drôles »
+    "scout_platforms": ["twitch", "youtube"],
+    "scout_language": "fr",  # langue des streams (code ISO), vide = toutes
+    "scout_max_channels": 5,  # chaînes trouvées par l'IA surveillées en même temps
+    "scout_every_hours": 24,
 }
 
 API_HOST = "127.0.0.1"

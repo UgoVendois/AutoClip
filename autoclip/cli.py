@@ -279,6 +279,19 @@ def cmd_twitch(args) -> int:
     return 0
 
 
+def cmd_scout(args) -> int:
+    from . import scout
+
+    rt = _runtime(args)
+    scout.start(rt.ctx.conn, rt.ctx.queue, args.bot)
+    rt.worker.run_until_idle()
+    run = rt.ctx.conn.execute("SELECT * FROM scout_run WHERE bot_id = ? ORDER BY id DESC LIMIT 1", (args.bot,)).fetchone()
+    print(f"{run['candidates']} chaîne(s) candidate(s)" + (f" ; erreur : {run['error']}" if run["error"] else ""))
+    for a in json.loads(run["added"]):
+        print(f"+ {a['platform']} {a['name']} : {a['reason']}")
+    return 0
+
+
 def cmd_discover(args) -> int:
     rt = _runtime(args)
     for w in rt.ctx.conn.execute("SELECT id FROM watch WHERE enabled = 1"):
@@ -432,6 +445,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("alerts", help="alertes (budget IA atteint...)").set_defaults(func=cmd_alerts)
     sub.add_parser("twitch-login", help="connecter un compte Twitch (lecture du chat)").set_defaults(func=cmd_twitch)
     sub.add_parser("discover", help="vérifie tout de suite les chaînes surveillées").set_defaults(func=cmd_discover)
+    sc_ = sub.add_parser("scout", help="l'IA cherche des chaînes à surveiller (thème : `ai set BOT scout_theme=...`)")
+    sc_.add_argument("bot", type=int)
+    sc_.set_defaults(func=cmd_scout)
 
     dr = sub.add_parser("dry-run", help="exécute tout le circuit sur une vidéo, sans publier")
     dr.add_argument("source", help="URL ou fichier vidéo")

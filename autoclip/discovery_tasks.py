@@ -329,7 +329,7 @@ def resume_deferred(conn: sqlite3.Connection, queue, now: float) -> int:
 
 def enqueue_due_discoveries(conn: sqlite3.Connection, queue, now: float) -> int:
     n = 0
-    for w in conn.execute("SELECT id, interval_minutes, last_checked_at FROM watch WHERE enabled = 1"):
+    for w in conn.execute("SELECT id, interval_minutes, last_checked_at FROM watch WHERE enabled = 1 AND dismissed = 0"):
         period = w["interval_minutes"] * 60
         if w["last_checked_at"] is None or w["last_checked_at"] + period <= now:
             queue.enqueue("discover", {"watch_id": w["id"]}, key=f"discover:{w['id']}:{int(now // period)}")
