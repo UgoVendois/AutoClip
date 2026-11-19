@@ -28,6 +28,11 @@
   const youtubeAccounts = $derived(bot.accounts.filter((a) => a.platform === 'youtube'));
   const targetId = $derived(form?.account_id ?? youtubeAccounts[0]?.id ?? null);
   const target = $derived(accounts.find((a) => a.id === targetId));
+  // Page « Personnalisation > Image de marque » de la chaîne (la photo ne passe pas par l'API).
+  const studioImages = $derived.by(() => {
+    const id = target?.url?.split('/channel/')[1];
+    return id ? `https://studio.youtube.com/channel/${id}/editing/images` : STUDIO;
+  });
 
   async function load() {
     try {
@@ -223,7 +228,8 @@
             <div class="flex shrink-0 flex-col items-center gap-3">
               <img src={imgUrl('avatar')} alt="Logo proposé pour la chaîne" class="size-36 rounded-full border border-line object-cover shadow-sm" />
               <a class="btn btn-sm" href={imgUrl('avatar')} download="photo-de-profil.png"><Icon name="download" size={14} /> Télécharger</a>
-              <p class="hint max-w-40 text-center">À importer dans YouTube Studio (pas d'API pour la photo).</p>
+              <a class="btn btn-sm" href={studioImages} target="_blank" rel="noreferrer"><Icon name="external" size={14} /> Importer sur YouTube</a>
+              <p class="hint max-w-44 text-center">YouTube ne permet pas de changer la photo par l'API : télécharge-la, puis « Importer » sous Photo de profil.</p>
             </div>
             <div class="min-w-0 flex-1">
               <div class="relative overflow-hidden rounded-xl border border-line">
