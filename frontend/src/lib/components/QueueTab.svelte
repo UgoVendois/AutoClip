@@ -5,6 +5,7 @@
   import { app, refreshBots, run } from '../state.svelte.js';
   import Badge from './Badge.svelte';
   import Icon from './Icon.svelte';
+  import AccountLink from './AccountLink.svelte';
   import Section from './Section.svelte';
 
   let { bot, tick, reload } = $props();
@@ -190,7 +191,7 @@
               <div class="min-w-0 flex-1">
                 <p class="truncate font-medium">{pub.title}</p>
                 <p class="mt-0.5 text-xs text-muted">
-                  {pub.account_name} · {pub.scheduled_at ? fmtDate(pub.scheduled_at) : 'créneau à venir'}
+                  <AccountLink name={pub.account_name} url={pub.account_url} /> · {pub.scheduled_at ? fmtDate(pub.scheduled_at) : 'créneau à venir'}
                 </p>
                 {#if pub.last_error}<p class="mt-1 text-xs text-danger">{pub.last_error}</p>{/if}
               </div>
@@ -215,7 +216,7 @@
             <li class="flex items-center gap-4 px-4 py-3">
               <div class="min-w-0 flex-1">
                 <p class="truncate">{pub.title}</p>
-                <p class="mt-0.5 text-xs text-muted">{pub.account_name} · {fmtDate(pub.updated_at)}</p>
+                <p class="mt-0.5 text-xs text-muted"><AccountLink name={pub.account_name} url={pub.account_url} /> · {fmtDate(pub.updated_at)}</p>
               </div>
               {#if pub.url?.startsWith('http')}
                 <a class="btn btn-sm" href={pub.url} target="_blank" rel="noreferrer"><Icon name="external" size={14} /> Voir</a>

@@ -129,9 +129,12 @@ def create_app(home: Path) -> FastAPI:
         bot["sources"] = _rows(conn.execute(
             "SELECT id, kind, uri, status, error, created_at FROM source WHERE bot_id = ? ORDER BY id DESC",
             (bot_id,)))
-        bot["accounts"] = _rows(conn.execute(
-            "SELECT a.id, a.platform, a.display_name FROM account a "
-            "JOIN bot_account ba ON ba.account_id = a.id WHERE ba.bot_id = ? ORDER BY a.id", (bot_id,)))
+        bot["accounts"] = [
+            {"id": r["id"], "platform": r["platform"], "display_name": r["display_name"],
+             "url": services.account_url(r["platform"], r["keyring_ref"])}
+            for r in conn.execute("SELECT a.id, a.platform, a.display_name, a.keyring_ref FROM account a "
+                                  "JOIN bot_account ba ON ba.account_id = a.id WHERE ba.bot_id = ? ORDER BY a.id",
+                                  (bot_id,))]
         sched = conn.execute("SELECT * FROM schedule WHERE bot_id = ?", (bot_id,)).fetchone()
         bot["schedule"] = dict(sched) if sched else None
         bot["stats"] = services.bot_stats(conn, bot_id)
@@ -395,14 +398,18 @@ def create_app(home: Path) -> FastAPI:
 
     @api.get("/publish-jobs")
     def publish_jobs(bot_id: int | None = None, conn=Depends(get_conn)):
-        query = """SELECT pj.*, c.title, c.bot_id, a.display_name AS account_name, a.platform
+        query = """SELECT pj.*, c.title, c.bot_id, a.display_name AS account_name, a.platform,
+                          a.keyring_ref AS account_ref
                    FROM publish_job pj JOIN clip c ON c.id = pj.clip_id
                    JOIN account a ON a.id = pj.account_id"""
         params: list[Any] = []
         if bot_id is not None:
             query += " WHERE c.bot_id = ?"
             params.append(bot_id)
-        return _rows(conn.execute(query + " ORDER BY COALESCE(pj.scheduled_at, 1e18), pj.id", params))
+        rows = _rows(conn.execute(query + " ORDER BY COALESCE(pj.scheduled_at, 1e18), pj.id", params))
+        for r in rows:
+            r["account_url"] = services.account_url(r["platform"], r.pop("account_ref"))
+        return rows
 
     # -- file de jobs -------------------------------------------------------------
     @api.get("/jobs")
@@ -475,6 +482,7 @@ def create_app(home: Path) -> FastAPI:
             item = dict(r)
             ref = item.pop("keyring_ref")
             item["connected"] = ref is not None
+            item["url"] = services.account_url(item["platform"], ref)
             # Jeton antérieur à l'agent identité : il faut reconnecter pour gérer la chaîne.
             item["can_manage"] = item["platform"] == "youtube" and ref is not None and has_manage_scope(ref)
             out.append(item)

@@ -5,6 +5,7 @@
   import { app, askConfirm, refreshBots, run } from '../state.svelte.js';
   import Badge from './Badge.svelte';
   import Icon from './Icon.svelte';
+  import AccountLink from './AccountLink.svelte';
   import Section from './Section.svelte';
 
   let { bot, reload } = $props();
@@ -189,7 +190,7 @@
         {#each bot.accounts as account (account.id)}
           <li class="flex items-center gap-2 rounded-full border border-line bg-surface-2 py-1 pl-3 pr-1">
             <span class="text-xs font-medium uppercase text-faint">{account.platform}</span>
-            {account.display_name}
+            <AccountLink name={account.display_name} url={account.url} />
             <button class="icon-btn danger h-6 w-6" title="Délier" aria-label="Délier {account.display_name}" onclick={() => unlink(account)}>
               <Icon name="x" size={13} />
             </button>

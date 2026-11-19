@@ -3,6 +3,7 @@
   import { api } from '../api.js';
   import { app, askConfirm, run, toast } from '../state.svelte.js';
   import Icon from './Icon.svelte';
+  import AccountLink from './AccountLink.svelte';
   import ModelPicker from './ModelPicker.svelte';
   import Section from './Section.svelte';
   import ThemeSwitch from './ThemeSwitch.svelte';
@@ -494,7 +495,7 @@
           {#each accounts as account (account.id)}
             <li class="flex items-center gap-3 px-4 py-3">
               <span class="text-xs font-medium uppercase text-faint">{account.platform}</span>
-              <span class="flex-1">{account.display_name}</span>
+              <AccountLink class="flex-1" name={account.display_name} url={account.url} />
               {#if !account.connected}<span class="badge" title="Compte utilisé pour les dry runs">Simulé</span>{/if}
               {#if account.connected && account.platform === 'youtube' && !account.can_manage}
                 <button class="badge badge-warning" title="Nouvelle autorisation nécessaire pour la bannière, la description et les playlists" onclick={connectYoutube} disabled={connecting}>

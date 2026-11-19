@@ -127,6 +127,13 @@ def delete_bot(conn: sqlite3.Connection, bot_id: int) -> None:
         conn.execute("DELETE FROM bot WHERE id = ?", (bot_id,))
 
 
+def account_url(platform: str, keyring_ref: str | None) -> str | None:
+    """Page publique de la chaîne (l'identifiant vient de la référence du jeton, pas du secret)."""
+    if platform == "youtube" and keyring_ref and keyring_ref.startswith("token:youtube:"):
+        return f"https://www.youtube.com/channel/{keyring_ref.removeprefix('token:youtube:')}"
+    return None
+
+
 def get_bot(conn: sqlite3.Connection, bot_id: int) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM bot WHERE id = ?", (bot_id,)).fetchone()
     if row is None:
@@ -312,7 +319,7 @@ def bot_stats(conn: sqlite3.Connection, bot_id: int) -> dict[str, int]:
 # -- découverte automatique ---------------------------------------------------------
 
 def add_watch(conn: sqlite3.Connection, bot_id: int, platform: str, channel: str,
-              interval_minutes: int = 60) -> int:
+              interval_minutes: int = 60, *, now: float | None = None) -> int:
     from .discovery import REGISTRY
 
     get_bot(conn, bot_id)
@@ -330,7 +337,7 @@ def add_watch(conn: sqlite3.Connection, bot_id: int, platform: str, channel: str
                ON CONFLICT (bot_id, platform, channel) DO UPDATE SET
                    interval_minutes = excluded.interval_minutes, enabled = 1, dismissed = 0,
                    origin = 'manual'""",
-            (bot_id, platform, channel, interval_minutes, time.time()))
+            (bot_id, platform, channel, interval_minutes, time.time() if now is None else now))
         return conn.execute("SELECT id FROM watch WHERE bot_id = ? AND platform = ? AND channel = ?",
                             (bot_id, platform, channel)).fetchone()["id"]
 

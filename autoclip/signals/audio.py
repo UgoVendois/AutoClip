@@ -15,7 +15,8 @@ def loudness_series(media: Path, step: float = 1.0) -> list[tuple[float, float]]
     """Sonie à court terme (LUFS, fenêtre de 3 s) échantillonnée chaque `step` s."""
     proc = subprocess.run(
         ["ffmpeg", "-hide_banner", "-nostats", "-i", str(media), "-vn",
-         "-af", "ebur128=framelog=verbose", "-f", "null", "-"],
+         # framelog=info : avec « verbose », ffmpeg 7+ masque les mesures au niveau de log par défaut.
+         "-af", "ebur128=framelog=info", "-f", "null", "-"],
         capture_output=True, text=True,
     )
     if proc.returncode != 0:

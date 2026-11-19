@@ -74,6 +74,23 @@ class TestPeaks(unittest.TestCase):
         self.assertEqual(comment_timestamps(["50:00"], duration=600), [])
 
 
+@unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg requis")
+class TestAudioEnergy(unittest.TestCase):
+    def test_loud_moment_is_found(self):
+        """Mesure réelle par ffmpeg : 40 s calmes, 10 s fortes, 40 s calmes."""
+        from autoclip.signals.audio import energy_windows, loudness_series
+
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = Path(tmp) / "a.m4a"
+            subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=90",
+                            "-af", "volume='if(between(t,40,50),1,0.03)':eval=frame", str(audio)], check=True)
+            series = loudness_series(audio)
+            self.assertGreater(len(series), 80)
+            windows = energy_windows(series, 90, window=10, top_n=3, margin=2)
+        self.assertTrue(windows)
+        self.assertTrue(35 <= windows[0].peak <= 55, windows[0])
+
+
 class TestTwitchHelpers(unittest.TestCase):
     def test_parse_duration(self):
         self.assertEqual(parse_duration("3h2m10s"), 10930)
@@ -199,8 +216,8 @@ class DiscoveryHarness(unittest.TestCase):
 class TestDeduplication(DiscoveryHarness):
     def test_same_vod_is_queued_once(self):
         self.record_chat(chat_events())
-        watch_id = services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 30)
-        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 30)  # doublon de surveillance
+        watch_id = services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 30, now=self.clock())
+        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 30, now=self.clock())  # doublon de surveillance
         self.run_all()
         self.clock.advance(3600)  # nouveau passage : la même VOD revient
         self.run_all()
@@ -214,7 +231,7 @@ class TestDeduplication(DiscoveryHarness):
 
     def test_live_vod_waits_until_stream_ends(self):
         self.twitch.items = [DiscoveredItem(**{**self.vod.__dict__, "live": True})]
-        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 30)
+        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 30, now=self.clock())
         self.run_all()
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM discovered").fetchone()[0], 0)
         self.twitch.items = [self.vod]
@@ -226,7 +243,7 @@ class TestDeduplication(DiscoveryHarness):
     def test_old_content_before_backfill_is_ignored(self):
         services.update_bot(self.conn, self.bot_id, ai_settings={"backfill_hours": 1})
         self.twitch.items = [DiscoveredItem(**{**self.vod.__dict__, "published_at": T0 - 5 * 86400})]
-        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 30)
+        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 30, now=self.clock())
         self.run_all()
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM discovered").fetchone()[0], 0)
 
@@ -237,7 +254,7 @@ class TestTwitchVodEndToEnd(DiscoveryHarness):
 
     def test_only_peak_windows_reach_the_ai(self):
         self.record_chat(chat_events())
-        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 60)
+        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 60, now=self.clock())
         self.run_all()
 
         # Téléchargement et transcription : seulement les fenêtres, jamais la VOD entière.
@@ -283,7 +300,7 @@ class TestTwitchVodEndToEnd(DiscoveryHarness):
         self.assertAlmostEqual(float(out), (c["end_ms"] - c["start_ms"]) / 1000, delta=0.3)
 
     def test_without_chat_falls_back_to_audio(self):
-        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 60)
+        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 60, now=self.clock())
         with self.assertLogs("autoclip.jobs.worker", level="WARNING"):
             self.run_all()
         self.assertEqual(self.twitch.audio_downloads, 1)  # pas de chat -> énergie audio
@@ -334,7 +351,7 @@ class TestTokenBudget(DiscoveryHarness):
     def test_pipeline_defers_cleanly_then_resumes_next_day(self):
         services.update_bot(self.conn, self.bot_id, ai_settings={"daily_token_budget": 10})
         self.record_chat(chat_events())
-        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 60 * 24)
+        services.add_watch(self.conn, self.bot_id, "twitch", "streamer", 60 * 24, now=self.clock())
         self.run_all()
         self.assertEqual(self.conn.execute("SELECT status FROM discovered").fetchone()[0], "deferred")
         self.assertEqual(self.provider.calls, [])

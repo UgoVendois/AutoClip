@@ -3,6 +3,7 @@
   import { api } from '../api.js';
   import { app, askConfirm, run, toast } from '../state.svelte.js';
   import Icon from './Icon.svelte';
+  import AccountLink from './AccountLink.svelte';
   import Section from './Section.svelte';
 
   let { bot, tick } = $props();
@@ -317,8 +318,9 @@
                   {#each youtubeAccounts as a}<option value={a.id}>{a.display_name}</option>{/each}
                 </select>
               {:else}
-                <span class="text-sm">Chaîne : <strong>{youtubeAccounts[0].display_name}</strong></span>
+                <span class="text-sm">Chaîne : <strong><AccountLink name={youtubeAccounts[0].display_name} url={youtubeAccounts[0].url} /></strong></span>
               {/if}
+              {#if youtubeAccounts.length > 1 && target?.url}<a class="btn btn-sm" href={target.url} target="_blank" rel="noreferrer"><Icon name="external" size={14} /> Voir la chaîne</a>{/if}
               {#if bot.dry_run}<span class="badge">Dry run : simulé</span>{/if}
               {#if ident.status === 'applied'}<span class="badge badge-success"><Icon name="check" size={11} /> Appliquée</span>{/if}
               {#if dirty}<span class="badge badge-warning">Modifications non envoyées</span>{/if}
