@@ -60,6 +60,7 @@ DEFAULT_CLIP_SETTINGS: dict[str, object] = {
     "trim_silences": True,  # coupe les silences (ni parole ni son) de plus de 0,7 s
     "hook_text": True,  # texte d'accroche incrusté au début du clip
     "hook_seconds": 3.0,
+    "auto_approve": False,  # valider chaque clip dès la fin de son montage (sans relecture)
 }
 
 # Découverte automatique et IA, propres à chaque bot (colonne `bot.ai_settings`).

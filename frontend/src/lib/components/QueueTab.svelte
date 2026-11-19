@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import { api, videoUrl } from '../api.js';
   import { JOB_KIND, PUBLISH_STATUS, SOURCE_STATUS, fmtClock, fmtDate } from '../format.js';
-  import { app, refreshBots, run } from '../state.svelte.js';
+  import { app, askConfirm, refreshBots, run, toast } from '../state.svelte.js';
   import Badge from './Badge.svelte';
   import Icon from './Icon.svelte';
   import AccountLink from './AccountLink.svelte';
@@ -81,6 +81,55 @@
     }
   }
 
+  let bulk = $state(false);
+  const autoApprove = $derived(Boolean(bot.clip_settings?.auto_approve));
+
+  async function approveAll() {
+    const ok = await askConfirm({
+      title: `Valider les ${review.length} clips ?`,
+      message: "Titres et descriptions tels qu'affichés ; les meilleurs scores partent en premier, selon le planning.",
+      confirmLabel: 'Tout valider',
+    });
+    if (!ok) return;
+    bulk = true;
+    // Titres et descriptions modifiés à la main : envoyés avec la validation.
+    const changed = {};
+    for (const clip of review) {
+      const e = edits[clip.id];
+      if (e && (e.title !== clip.title || e.description !== clip.description)) {
+        changed[clip.id] = { title: e.title, description: e.description };
+      }
+    }
+    const res = await run(api.post(`/bots/${bot.id}/clips/approve-all`, changed));
+    bulk = false;
+    if (res) {
+      toast(`${res.approved} clip${res.approved > 1 ? 's' : ''} validé${res.approved > 1 ? 's' : ''}`);
+      edits = {};
+      await load(bot.id);
+      reload();
+      refreshBots();
+    }
+  }
+
+  async function toggleAutoApprove() {
+    const on = !autoApprove;
+    if (await run(api.patch(`/bots/${bot.id}`, { clip_settings: { auto_approve: on } }),
+                  on ? 'Validation automatique activée : les nouveaux clips partent sans relecture' : 'Validation automatique désactivée')) {
+      reload();
+    }
+  }
+
+  async function publishNow(pub) {
+    const ok = await askConfirm({
+      title: 'Publier maintenant ?',
+      message: bot.dry_run
+        ? `« ${pub.title} » sera publié tout de suite (simulé : le bot est en dry run).`
+        : `« ${pub.title} » part tout de suite sur ${pub.account_name}. Les publications suivantes reprennent l'espacement du planning à partir de maintenant.`,
+      confirmLabel: 'Publier',
+    });
+    if (ok && (await run(api.post(`/publish-jobs/${pub.id}/publish-now`), 'Publication lancée'))) load(bot.id);
+  }
+
   async function retry(job) {
     if (await run(api.post(`/jobs/${job.id}/retry`), 'Relancé')) load(bot.id);
   }
@@ -123,8 +172,24 @@
       icon="check"
       description={review.length
         ? 'Regarde chaque clip, ajuste le titre si besoin, puis valide ou rejette.'
-        : 'Aucun clip en attente. Ajoute une vidéo dans Configuration pour en générer.'}
+        : autoApprove
+          ? 'Validation automatique active : les nouveaux clips partent directement dans le planning.'
+          : 'Aucun clip en attente. Ajoute une vidéo dans Configuration pour en générer.'}
     >
+      {#snippet actions()}
+        <div class="flex flex-wrap items-center justify-end gap-3">
+        <label class="flex items-center gap-2 text-sm text-muted" title="Chaque nouveau clip est validé dès la fin de son montage, sans relecture">
+          Valider automatiquement
+          <button class="switch" role="switch" aria-checked={autoApprove} aria-label="Valider automatiquement" onclick={toggleAutoApprove}></button>
+        </label>
+        {#if review.length > 1}
+          <button class="btn btn-sm btn-primary" disabled={bulk || !bot.accounts.length} onclick={approveAll}>
+            {#if bulk}<span class="spinner"></span>{:else}<Icon name="check" size={14} />{/if}
+            Tout valider ({review.length})
+          </button>
+        {/if}
+        </div>
+      {/snippet}
       {#if review.length}
         <div class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(440px,1fr))]">
           {#each review as clip (clip.id)}
@@ -195,6 +260,11 @@
                 </p>
                 {#if pub.last_error}<p class="mt-1 text-xs text-danger">{pub.last_error}</p>{/if}
               </div>
+              {#if pub.status === 'pending'}
+                <button class="btn btn-sm" onclick={() => publishNow(pub)} title="Publier tout de suite, sans attendre le créneau">
+                  <Icon name="send" size={14} /> Publier
+                </button>
+              {/if}
               <Badge status={pub.status} map={PUBLISH_STATUS} />
             </li>
           {/each}

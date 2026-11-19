@@ -213,6 +213,12 @@ def run_render(ctx: Context, payload: dict) -> dict:
             "WHERE id = ? AND status IN ('render', 'failed')",
             (str(out), ctx.clock(), clip["id"]),
         )
+    # Premier montage seulement : une accroche modifiée à la main relance le rendu d'un clip en relecture.
+    if settings.get("auto_approve") and clip["status"] == "render" and not clip["file_path"]:
+        try:  # validation automatique (sans relecture) : publié selon le planning
+            services.approve_clip(ctx.conn, clip["id"], now=ctx.clock())
+        except services.ServiceError as exc:  # aucun compte lié : le clip attend une validation
+            log.info("clip %s non validé automatiquement : %s", clip["id"], exc)
     return {"file": str(out)}
 
 

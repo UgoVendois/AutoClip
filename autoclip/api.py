@@ -71,6 +71,13 @@ class ApproveIn(BaseModel):
     description: str | None = None
 
 
+def _replan(conn: sqlite3.Connection) -> None:
+    """Créneaux recalculés tout de suite, sans attendre le prochain tour du démon."""
+    from .scheduler import Scheduler
+
+    Scheduler(conn, JobQueue(conn)).tick()
+
+
 def _rows(rows) -> list[dict]:
     return [dict(r) for r in rows]
 
@@ -168,6 +175,7 @@ def create_app(home: Path) -> FastAPI:
     @api.put("/bots/{bot_id}/schedule")
     def put_schedule(bot_id: int, body: ScheduleIn, conn=Depends(get_conn)):
         guard(services.set_schedule, conn, bot_id, **body.model_dump())
+        _replan(conn)
         return {"ok": True}
 
     @api.post("/bots/{bot_id}/accounts/{account_id}")
@@ -422,6 +430,19 @@ def create_app(home: Path) -> FastAPI:
         body = body or ApproveIn()
         return {"publish_jobs": guard(services.approve_clip, conn, clip_id, title=body.title,
                                       description=body.description)}
+
+    @api.post("/bots/{bot_id}/clips/approve-all")
+    def approve_all(bot_id: int, body: dict[int, ApproveIn] | None = None, conn=Depends(get_conn)):
+        edits = {cid: e.model_dump(exclude_none=True) for cid, e in (body or {}).items()}
+        n = guard(services.approve_all, conn, bot_id, edits=edits)
+        _replan(conn)
+        return {"approved": n}
+
+    @api.post("/publish-jobs/{publish_job_id}/publish-now")
+    def publish_now(publish_job_id: int, conn=Depends(get_conn)):
+        guard(services.publish_now, conn, JobQueue(conn), publish_job_id)
+        _replan(conn)
+        return {"ok": True}
 
     @api.post("/clips/{clip_id}/reject")
     def reject(clip_id: int, conn=Depends(get_conn)):

@@ -235,6 +235,56 @@ def approve_clip(conn: sqlite3.Connection, clip_id: int, *, now: float | None = 
     return len(accounts)
 
 
+def approve_all(conn: sqlite3.Connection, bot_id: int, *, now: float | None = None,
+                edits: dict[int, dict[str, str]] | None = None) -> int:
+    """Valide tous les clips en attente, les meilleurs scores d'abord (publiés en premier).
+    `edits` : titres et descriptions modifiés à la main, par clip. Renvoie le nombre validé."""
+    edits = edits or {}
+    get_bot(conn, bot_id)
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM clip WHERE bot_id = ? AND status = 'review' "
+        "ORDER BY score DESC, id", (bot_id,))]
+    now = time.time() if now is None else now
+    for i, clip_id in enumerate(ids):
+        e = edits.get(clip_id, {})
+        approve_clip(conn, clip_id, now=now + i * 1e-3,  # garde l'ordre d'approbation
+                     title=e.get("title"), description=e.get("description"))
+    return len(ids)
+
+
+def publish_now(conn: sqlite3.Connection, queue: JobQueue, publish_job_id: int, *,
+                now: float | None = None) -> None:
+    """Envoie tout de suite une publication programmée. Les créneaux suivants
+    repartent de maintenant, avec l'espacement du planning."""
+    now = time.time() if now is None else now
+    row = conn.execute("SELECT pj.*, c.bot_id FROM publish_job pj JOIN clip c ON c.id = pj.clip_id "
+                       "WHERE pj.id = ?", (publish_job_id,)).fetchone()
+    if row is None:
+        raise ServiceError("publication introuvable")
+    if row["status"] != "pending":
+        raise ServiceError("cette publication est déjà partie")
+    with tx(conn):
+        conn.execute("UPDATE publish_job SET status = 'queued', scheduled_at = ?, updated_at = ? WHERE id = ?",
+                     (now, now, publish_job_id))
+        queue.enqueue("publish", {"publish_job_id": publish_job_id}, key=f"publish:{publish_job_id}")
+        # Les autres réservations du bot sont recalculées à partir de cet envoi.
+        conn.execute("UPDATE publish_job SET scheduled_at = NULL, updated_at = ? WHERE status = 'pending' "
+                     "AND clip_id IN (SELECT id FROM clip WHERE bot_id = ?) AND clip_id != ?",
+                     (now, row["bot_id"], row["clip_id"]))
+        conn.execute("UPDATE schedule SET last_slot_at = ? WHERE bot_id = ?", (now, row["bot_id"]))
+
+
+def release_slots(conn: sqlite3.Connection, bot_id: int) -> None:
+    """Libère le créneau réservé (calculé avec l'ancien planning) : le planificateur
+    en recalcule un, espacé depuis la dernière vraie publication."""
+    with tx(conn):
+        conn.execute("UPDATE publish_job SET scheduled_at = NULL WHERE status = 'pending' "
+                     "AND clip_id IN (SELECT id FROM clip WHERE bot_id = ?)", (bot_id,))
+        last = conn.execute("SELECT MAX(pj.scheduled_at) FROM publish_job pj JOIN clip c ON c.id = pj.clip_id "
+                            "WHERE c.bot_id = ? AND pj.status != 'pending'", (bot_id,)).fetchone()[0]
+        conn.execute("UPDATE schedule SET last_slot_at = ? WHERE bot_id = ?", (last, bot_id))
+
+
 def set_hook(conn: sqlite3.Connection, queue: JobQueue, clip_id: int, hook: str) -> None:
     """Change le texte d'accroche d'un clip en attente de validation : il est
     re-rendu (l'accroche est incrustée dans la vidéo)."""
@@ -308,6 +358,7 @@ def set_schedule(conn: sqlite3.Connection, bot_id: int, *, every_hours: float,
                    timezone = excluded.timezone, enabled = excluded.enabled""",
             (bot_id, every_hours, mask, start, end, timezone, int(enabled)),
         )
+    release_slots(conn, bot_id)
 
 
 def bot_stats(conn: sqlite3.Connection, bot_id: int) -> dict[str, int]:

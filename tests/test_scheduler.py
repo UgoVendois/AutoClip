@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from autoclip import db
+from autoclip import db, services
 from autoclip.jobs.queue import JobQueue
 from autoclip.scheduler import ScheduleSpec, Scheduler, next_slot, parse_hhmm, weekday_mask
 
@@ -193,6 +193,49 @@ class TestSchedulerTick(SchedulerTestCase):
         sched = Scheduler(self.conn, self.queue, clock=self.clock)
         sched.tick()
         self.assertEqual(self.slots()[1], (2, ts("2026-11-16 14:00"), "pending"))
+
+
+class TestManualControls(SchedulerTestCase):
+    def test_schedule_change_moves_the_reserved_slot(self):
+        self.approve(1, approved_at=1)
+        self.approve(2, approved_at=2)
+        self.clock.set(ts("2026-11-16 09:00"))
+        self.sched.tick()  # clip 1 envoyé à 9h, clip 2 réservé à 13h (toutes les 4 h)
+        self.assertEqual(self.slots()[1], (2, ts("2026-11-16 13:00"), "pending"))
+        services.set_schedule(self.conn, 1, every_hours=1, window="09:00-21:00", timezone="Europe/Paris")
+        self.sched.tick()
+        self.assertEqual(self.slots()[1], (2, ts("2026-11-16 10:00"), "pending"))  # 9h + 1 h
+
+    def test_schedule_change_before_any_publication(self):
+        self.approve(1)
+        self.sched.tick()  # réservé à 9h
+        services.set_schedule(self.conn, 1, every_hours=4, window="14:00-21:00", timezone="Europe/Paris")
+        self.sched.tick()
+        self.assertEqual(self.slots()[0], (1, ts("2026-11-16 14:00"), "pending"))
+
+    def test_publish_now_then_spacing_restarts(self):
+        self.approve(1, approved_at=1)
+        self.approve(2, approved_at=2)
+        self.sched.tick()  # clip 1 réservé à 9h
+        job2 = self.conn.execute("SELECT id FROM publish_job WHERE clip_id = 2").fetchone()["id"]
+        services.publish_now(self.conn, self.queue, job2, now=self.clock())
+        self.assertEqual(self.publish_jobs_in_queue(), [f"publish:{job2}"])
+        self.sched.tick()
+        self.assertEqual(self.slots()[0], (1, ts("2026-11-16 12:00"), "pending"))  # 8h + 4 h
+        with self.assertRaises(services.ServiceError):
+            services.publish_now(self.conn, self.queue, job2)  # déjà partie
+
+    def test_approve_all_best_scores_first(self):
+        self.conn.execute("INSERT INTO bot_account (bot_id, account_id) VALUES (1, 1)")
+        for clip_id, score in ((1, 55.0), (2, 90.0), (3, 70.0)):
+            self.conn.execute(
+                "INSERT INTO clip (id, bot_id, source_id, start_ms, end_ms, status, score, created_at, updated_at) "
+                "VALUES (?, 1, 1, ?, ?, 'review', ?, 0, 0)", (clip_id, clip_id * 1000, clip_id * 1000 + 500, score))
+        self.assertEqual(services.approve_all(self.conn, 1, now=self.clock()), 3)
+        self.sched.tick()
+        self.assertEqual(self.slots()[0], (2, ts("2026-11-16 09:00"), "pending"))  # 90 publié en premier
+        self.assertEqual([s[0] for s in self.slots()], [2, 3, 1])  # puis 70, puis 55
+        self.assertEqual(services.approve_all(self.conn, 1), 0)
 
 
 if __name__ == "__main__":

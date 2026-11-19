@@ -134,5 +134,28 @@ class TestDryRunEndToEnd(unittest.TestCase):
         self.assertEqual([c["status"] for c in report.clips], ["review", "review"])
 
 
+    def test_auto_approve_schedules_clips_without_review(self):
+        from autoclip import db, services
+        from autoclip.jobs.queue import JobQueue
+        from autoclip.jobs.worker import Worker
+        from autoclip.pipeline.cache import Cache
+        from autoclip.tasks import TASKS, Context
+
+        home = Path(self.tmp.name) / "home-auto"
+        conn = db.connect(home / "autoclip.db")
+        queue = JobQueue(conn)
+        ctx = Context(conn=conn, queue=queue, cache=Cache(home / "cache"),
+                      transcriber=lambda m, mo, l: {"language": "fr", "words": fake_words()})
+        bot = services.create_bot(conn, "Auto", dry_run=True)
+        services.link_account(conn, bot, services.create_dry_account(conn, "Chaîne"))
+        services.update_bot(conn, bot, clip_settings={"max_clips": 2, "auto_approve": True})
+        services.add_source(conn, queue, bot, str(self.video))
+        Worker(ctx, queue, TASKS).run_until_idle()
+        rows = conn.execute("SELECT status, language FROM clip").fetchall()
+        self.assertEqual([tuple(r) for r in rows], [("scheduled", "fr"), ("scheduled", "fr")])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM publish_job").fetchone()[0], 2)
+        conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()

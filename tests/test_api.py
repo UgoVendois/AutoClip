@@ -29,6 +29,30 @@ class TestApi(unittest.TestCase):
         self.assertLess(resp.status_code, 300, resp.text)
         return resp.json()
 
+    def test_approve_all_and_publish_now(self):
+        from autoclip import db, services
+
+        bot_id = self.ok("POST", "/bots", json={"name": "Clips"})["id"]
+        conn = db.connect(self.home / "autoclip.db")
+        services.link_account(conn, bot_id, services.create_dry_account(conn, "Chaîne"))
+        src = conn.execute("INSERT INTO source (bot_id, kind, uri, status, created_at) "
+                           "VALUES (?, 'file', 'x', 'done', 0)", (bot_id,)).lastrowid
+        for i, score in ((1, 60.0), (2, 90.0)):
+            conn.execute("INSERT INTO clip (bot_id, source_id, start_ms, end_ms, title, status, score, "
+                         "created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'review', ?, 0, 0)",
+                         (bot_id, src, i * 1000, i * 1000 + 500, f"clip {i}", score))
+        first = conn.execute("SELECT id FROM clip WHERE score = 60").fetchone()["id"]
+        res = self.ok("POST", f"/bots/{bot_id}/clips/approve-all", json={str(first): {"title": "Titre revu"}})
+        self.assertEqual(res["approved"], 2)
+        self.assertEqual(conn.execute("SELECT title FROM clip WHERE id = ?", (first,)).fetchone()[0], "Titre revu")
+        self.ok("PUT", f"/bots/{bot_id}/schedule", json={"every_hours": 4})
+        pubs = self.ok("GET", f"/publish-jobs?bot_id={bot_id}")
+        pending = [p for p in pubs if p["status"] == "pending"]
+        self.ok("POST", f"/publish-jobs/{pending[-1]['id']}/publish-now")
+        statuses = {p["id"]: p["status"] for p in self.ok("GET", f"/publish-jobs?bot_id={bot_id}")}
+        self.assertEqual(statuses[pending[-1]["id"]], "queued")
+        conn.close()
+
     def test_bot_lifecycle(self):
         bot_id = self.ok("POST", "/bots", json={"name": "Podcast"})["id"]
         self.ok("PATCH", f"/bots/{bot_id}", json={"name": "Podcast FR",
