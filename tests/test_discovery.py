@@ -280,6 +280,10 @@ class TestTwitchVodEndToEnd(DiscoveryHarness):
             self.assertTrue(any(b - 15 <= seg.start <= b for b in BURSTS), seg)  # démarre avant la rafale
         # L'IA reçoit aussi des images clés.
         self.assertEqual(self.provider.images_seen, 2 * len(segments))
+        # Langue détectée à la transcription : transmise à l'IA (titres) et gardée sur les clips.
+        self.assertEqual(self.provider.calls[0].language, "fr")
+        self.assertIn('"language": "fr"', self.provider.calls[0].user_content())
+        self.assertEqual({r[0] for r in self.conn.execute("SELECT language FROM clip")}, {"fr"})
 
         # Les clips attendent la validation, avec score et raison.
         clips = services.list_clips(self.conn, bot_id=self.bot_id)

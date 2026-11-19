@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS bot (
@@ -306,6 +306,11 @@ CREATE TABLE IF NOT EXISTS scout_run (
     6: """
 -- Début du dernier essai de chaque job : durées réelles pour estimer les temps restants.
 ALTER TABLE job ADD COLUMN started_at REAL;
+""",
+    7: """
+-- Langue parlée (ISO 639-1, détectée par Whisper) : titres et métadonnées dans cette langue.
+ALTER TABLE candidate_window ADD COLUMN language TEXT;
+ALTER TABLE clip ADD COLUMN language TEXT;
 """,
 }
 

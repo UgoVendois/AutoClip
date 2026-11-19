@@ -238,6 +238,9 @@ class YouTubePublisher(Publisher):
                 "description": req.description[:5000],
                 "tags": [*req.tags, _marker(req.token)],
                 "categoryId": "22",
+                # Langue des titres et de l'audio : YouTube propose la vidéo au bon public.
+                **({"defaultLanguage": req.language, "defaultAudioLanguage": req.language}
+                   if req.language else {}),
             },
             "status": {"privacyStatus": req.privacy, "selfDeclaredMadeForKids": False},
         }

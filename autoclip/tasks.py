@@ -155,7 +155,8 @@ def run_analyze(ctx: Context, payload: dict) -> dict:
         return {"cancelled": True}
     bot = services.get_bot(ctx.conn, src["bot_id"])
     settings = services.bot_settings(bot)
-    words = Cache.read_json(transcript_path(ctx, src))["words"]
+    transcript = Cache.read_json(transcript_path(ctx, src))
+    words = transcript["words"]
     candidates = analyze.find_clips(words, min_seconds=settings["min_seconds"],
                                     max_seconds=settings["max_seconds"],
                                     max_clips=settings["max_clips"])
@@ -164,10 +165,10 @@ def run_analyze(ctx: Context, payload: dict) -> dict:
         for cand in candidates:
             ctx.conn.execute(
                 """INSERT OR IGNORE INTO clip (bot_id, source_id, start_ms, end_ms, score, title,
-                                               description, words, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                               description, words, language, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (bot["id"], src["id"], int(cand.start * 1000), int(cand.end * 1000), cand.score,
-                 cand.title, cand.text, json.dumps(cand.words), now, now),
+                 cand.title, cand.text, json.dumps(cand.words), transcript.get("language"), now, now),
             )
         clip_ids = [r["id"] for r in ctx.conn.execute(
             "SELECT id FROM clip WHERE source_id = ? AND status = 'render'", (src["id"],))]
@@ -219,7 +220,7 @@ def run_render(ctx: Context, payload: dict) -> dict:
 
 def _publish_row(ctx: Context, publish_job_id: int) -> sqlite3.Row:
     row = ctx.conn.execute(
-        """SELECT pj.*, c.title, c.description, c.file_path, c.bot_id, b.dry_run, b.clip_settings,
+        """SELECT pj.*, c.title, c.description, c.file_path, c.bot_id, c.language, b.dry_run, b.clip_settings,
                   a.platform, a.display_name, a.keyring_ref
            FROM publish_job pj
            JOIN clip c ON c.id = pj.clip_id
@@ -254,6 +255,7 @@ def run_publish(ctx: Context, payload: dict) -> dict:
         token=f"c{row['clip_id']}a{row['account_id']}",
         tags=list(tags),
         privacy=settings["youtube_privacy"],
+        language=row["language"] or "",
     )
     try:
         result = ctx.publisher(bool(row["dry_run"]), row["platform"]).publish_once(request, account)

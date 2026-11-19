@@ -190,12 +190,14 @@ def run_prepare_window(ctx, payload: dict) -> dict:
     if not cache_file.exists():
         Cache.write_json(cache_file, ctx.transcriber(media, settings["whisper_model"],
                                                      settings["whisper_language"]))
-    local_words = Cache.read_json(cache_file)["words"]
+    transcript = Cache.read_json(cache_file)
+    local_words = transcript["words"]
     # Temps de l'extrait -> temps de la vidéo complète.
     words = [{**wd, "start": wd["start"] + w["start"], "end": wd["end"] + w["start"]} for wd in local_words]
     with tx(ctx.conn):
-        ctx.conn.execute("UPDATE candidate_window SET media_path = ?, words = ?, status = 'ready' "
-                         "WHERE id = ? AND status = 'pending'", (str(media), json.dumps(words), w["id"]))
+        ctx.conn.execute("UPDATE candidate_window SET media_path = ?, words = ?, language = ?, status = 'ready' "
+                         "WHERE id = ? AND status = 'pending'",
+                         (str(media), json.dumps(words), transcript.get("language"), w["id"]))
     _maybe_score(ctx, row["id"])
     return {"words": len(words)}
 
@@ -251,6 +253,7 @@ def run_ai_score(ctx, payload: dict) -> dict:
         return {"segments": 0}
 
     request_segments = [s for s, _, _ in segments.values()]
+    language = spoken_language(windows.values())
     provider = ctx.ai_override or make_provider(ai, dry_run=bool(bot["dry_run"]) or ctx.force_dry_run)
     if provider is None:
         scores = {s.id: SegmentScore(id=s.id, score=min(100, int(50 + 10 * s.signal_score)),
@@ -263,7 +266,7 @@ def run_ai_score(ctx, payload: dict) -> dict:
 
         images = (segment_images(segments, anchors) if ai["vision"] and provider.supports_images else {})
         request = ScoringRequest(video_title=row["title"], channel=row["channel_id"] or "",
-                                 segments=request_segments, images=images)
+                                 segments=request_segments, images=images, language=language)
         outcome = score_with_budget(ctx.conn, provider, request, bot_id=bot["id"],
                                     daily_budget=ai["daily_token_budget"], now=ctx.clock())
         if outcome.scores is None:
@@ -290,11 +293,12 @@ def run_ai_score(ctx, payload: dict) -> dict:
             words = [wd for wd in json.loads(w["words"]) if wd["end"] > seg.start and wd["start"] < seg.end]
             cur = ctx.conn.execute(
                 """INSERT OR IGNORE INTO clip (bot_id, source_id, start_ms, end_ms, score, title, description,
-                       words, reason, origin, media_path, media_offset_ms, hook, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       words, reason, origin, media_path, media_offset_ms, hook, language, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (bot["id"], row["source_id"], int(seg.start * 1000), int(seg.end * 1000), sc.score,
                  sc.title or seg.text[:70] or row["title"][:70], sc.description, json.dumps(words), sc.reason,
-                 origin, w["media_path"], int(w["start"] * 1000), sc.hook.strip()[:60], now, now))
+                 origin, w["media_path"], int(w["start"] * 1000), sc.hook.strip()[:60], language or None,
+                 now, now))
             if cur.rowcount:
                 ctx.queue.enqueue("render", {"clip_id": cur.lastrowid}, key=f"render:{cur.lastrowid}")
         ctx.conn.execute("UPDATE candidate_window SET status = 'scored' WHERE discovered_id = ? AND status = 'ready'",
@@ -303,6 +307,15 @@ def run_ai_score(ctx, payload: dict) -> dict:
         if row["source_id"]:
             ctx.conn.execute("UPDATE source SET status = 'done' WHERE id = ?", (row["source_id"],))
     return {"segments": len(segments), "clips": len(chosen), "tokens": tokens}
+
+
+def spoken_language(windows) -> str:
+    """Langue la plus parlée sur les fenêtres (pondérée par le nombre de mots)."""
+    counts: dict[str, int] = {}
+    for w in windows:
+        if w["language"]:
+            counts[w["language"]] = counts.get(w["language"], 0) + len(json.loads(w["words"] or "[]"))
+    return max(counts, key=counts.get) if counts else ""
 
 
 MAX_IMAGES = 30  # par appel : ~9 000 tokens d'images au plus

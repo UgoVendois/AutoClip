@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from ..jobs.queue import PermanentError
 
-PROMPT_VERSION = 2
+PROMPT_VERSION = 3
 
 SYSTEM_PROMPT = """Tu sélectionnes des extraits de vidéos (streams Twitch, vidéos YouTube, souvent du jeu vidéo) à publier en Shorts verticaux.
 
@@ -21,9 +21,11 @@ On te donne des segments déjà présélectionnés par des signaux bon marché (
 Pour chaque segment, renvoie :
 - score : entier de 0 à 100. 80+ = moment fort qui tient seul sans contexte : action spectaculaire à l'écran (crash, cascade, poursuite, bug absurde), réaction forte du streamer (rire, rage, choc), punchline, révélation. 50-79 = intéressant mais dépend du contexte. Moins de 50 = rien de notable, remplissage, menu, écran de chargement, ou incompréhensible sans le reste.
 - reason : une phrase en français qui justifie le score à partir de ce qui se passe (paroles et images).
-- title : titre accrocheur en français, 70 caractères maximum, sans hashtag ni guillemets, fidèle au contenu.
-- description : 1 à 2 phrases en français qui donnent envie de regarder.
-- hook : texte d'accroche incrusté à l'écran pendant les 3 premières secondes, en français, 6 à 40 caractères, qui donne envie de voir la suite sans tout révéler (ex. « Il ne s'attendait pas à ça », « Le pire braquage de l'histoire »). Pas d'emoji, pas de hashtag.
+- title : titre accrocheur, 70 caractères maximum, sans hashtag ni guillemets, fidèle au contenu.
+- description : 1 à 2 phrases qui donnent envie de regarder.
+- hook : texte d'accroche incrusté à l'écran pendant les 3 premières secondes, 6 à 40 caractères, qui donne envie de voir la suite sans tout révéler (ex. « Il ne s'attendait pas à ça », « Le pire braquage de l'histoire »). Pas d'emoji, pas de hashtag.
+
+Langue : title, description et hook sont écrits dans la langue du contenu, celle que parle le streamer, pour toucher son public (les exemples ci-dessus sont en français, adapte-les). Le champ « language » (code ISO 639-1, détecté sur l'audio) la donne quand il est présent ; sinon, déduis-la des transcriptions puis du titre de la vidéo. Seul « reason » reste en français.
 
 Juge le contenu réel : un pic de chat sans rien de notable à l'écran ni dans les paroles mérite un score bas. Un segment sans parole peut valoir 90 si l'action à l'écran est spectaculaire. Reprends exactement les identifiants (id) reçus, un résultat par segment."""
 
@@ -45,6 +47,7 @@ class ScoringRequest:
     segments: list[Segment]
     # Images clés par segment (JPEG), envoyées avec le texte si le fournisseur sait les lire.
     images: dict[str, list[bytes]] = field(default_factory=dict)
+    language: str = ""  # langue parlée (ISO 639-1, détectée par Whisper) : celle des titres
 
     def image_list(self) -> list[tuple[str, bytes]]:
         """(légende, JPEG) dans l'ordre des segments."""
@@ -58,6 +61,7 @@ class ScoringRequest:
     def user_content(self) -> str:
         payload = {
             "video": {"title": self.video_title, "channel": self.channel},
+            **({"language": self.language} if self.language else {}),
             "segments": [
                 {"id": s.id, "duration_s": round(s.end - s.start), "signal": s.signal,
                  "signal_strength": round(s.signal_score, 2), "transcript": s.text}
