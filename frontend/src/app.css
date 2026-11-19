@@ -103,6 +103,11 @@ body {
 
 /* Composants dans la couche « components » : les utilitaires Tailwind (w-auto, mt-1…) les complètent. */
 @layer components {
+  /* Texte sélectionnable partout, sauf les commandes (double-clic sans surlignage). */
+  button, [role='switch'], [role='tab'] {
+    user-select: none;
+  }
+
   .btn {
     display: inline-flex;
     align-items: center;

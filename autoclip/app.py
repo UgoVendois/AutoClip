@@ -76,7 +76,8 @@ def run_app(home: Path | None = None, host: str = API_HOST, port: int = API_PORT
 
     bridge = JsBridge()
     bridge.window = webview.create_window("AutoClip", url, js_api=bridge, width=1320, height=860,
-                                          min_size=(960, 620), background_color="#1f1e1d")
+                                          min_size=(960, 620), background_color="#1f1e1d",
+                                          text_select=True)
     try:
         webview.start(gui="gtk", debug=debug)
     finally:
