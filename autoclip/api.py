@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, db, secrets, services
+from . import __version__, db, eta, secrets, services
 from .config import Paths
 from .jobs.queue import JobQueue
 
@@ -129,6 +129,14 @@ def create_app(home: Path) -> FastAPI:
         bot["sources"] = _rows(conn.execute(
             "SELECT id, kind, uri, status, error, created_at FROM source WHERE bot_id = ? ORDER BY id DESC",
             (bot_id,)))
+        if any(s["status"] in services.ACTIVE_SOURCE for s in bot["sources"]):
+            remaining = eta.estimate(conn, time.time())
+            linked = {r["source_id"]: r["id"] for r in conn.execute(
+                "SELECT id, source_id FROM discovered WHERE bot_id = ? AND source_id IS NOT NULL", (bot_id,))}
+            for s in bot["sources"]:
+                if s["status"] in services.ACTIVE_SOURCE:
+                    key = ("d", linked[s["id"]]) if s["id"] in linked else ("s", s["id"])
+                    s["eta_seconds"] = remaining.get(key)
         bot["accounts"] = [
             {"id": r["id"], "platform": r["platform"], "display_name": r["display_name"],
              "url": services.account_url(r["platform"], r["keyring_ref"])}
@@ -247,7 +255,23 @@ def create_app(home: Path) -> FastAPI:
 
     @api.get("/bots/{bot_id}/discovered")
     def discovered(bot_id: int, conn=Depends(get_conn)):
-        return _rows(conn.execute("SELECT * FROM discovered WHERE bot_id = ? ORDER BY id DESC LIMIT 200", (bot_id,)))
+        rows = _rows(conn.execute("SELECT * FROM discovered WHERE bot_id = ? ORDER BY id DESC LIMIT 200", (bot_id,)))
+        if any(r["status"] in services.ACTIVE_DISCOVERED for r in rows):
+            remaining = eta.estimate(conn, time.time())
+            for r in rows:
+                if r["status"] in services.ACTIVE_DISCOVERED and r["status"] != "deferred":
+                    r["eta_seconds"] = remaining.get(("d", r["id"]))
+        return rows
+
+    @api.post("/discovered/{discovered_id}/cancel")
+    def cancel_discovered(discovered_id: int, conn=Depends(get_conn)):
+        guard(services.cancel_discovered, conn, discovered_id)
+        return {"ok": True}
+
+    @api.post("/sources/{source_id}/cancel")
+    def cancel_source(source_id: int, conn=Depends(get_conn)):
+        guard(services.cancel_source, conn, source_id)
+        return {"ok": True}
 
     @api.get("/bots/{bot_id}/ai-usage")
     def ai_usage(bot_id: int, conn=Depends(get_conn)):
@@ -309,7 +333,10 @@ def create_app(home: Path) -> FastAPI:
     @api.get("/bots/{bot_id}/identity")
     def get_identity(bot_id: int, conn=Depends(get_conn)):
         guard(services.get_bot, conn, bot_id)
-        return {"identity": ident.latest(conn, bot_id),
+        identity = ident.latest(conn, bot_id)
+        if identity and identity["images_status"] in ("pending", "generating"):
+            identity["images_eta"] = eta.estimate(conn, time.time()).get(("i", identity["id"]))
+        return {"identity": identity,
                 "playlists": _rows(conn.execute(
                     "SELECT p.*, (SELECT COUNT(*) FROM playlist_item i WHERE i.playlist_id = p.id) AS items "
                     "FROM playlist p WHERE p.bot_id = ? ORDER BY p.id", (bot_id,)))}
@@ -325,6 +352,11 @@ def create_app(home: Path) -> FastAPI:
     @api.post("/identity/{identity_id}/images")
     def identity_images(identity_id: int, conn=Depends(get_conn)):
         guard(ident.regenerate_images, conn, JobQueue(conn), identity_id)
+        return {"ok": True}
+
+    @api.post("/identity/{identity_id}/images/cancel")
+    def identity_images_cancel(identity_id: int, conn=Depends(get_conn)):
+        guard(ident.cancel_images, conn, identity_id)
         return {"ok": True}
 
     @api.post("/identity/{identity_id}/apply")

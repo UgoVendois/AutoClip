@@ -135,7 +135,7 @@ class LocalTwitch(TwitchDiscoverer):
                        check=True)
         return out
 
-    def download_audio(self, item, dest):
+    def download_audio(self, item, dest, should_stop=None):
         self.audio_downloads += 1
         raise AssertionError("pas de téléchargement audio quand le chat est disponible")
 

@@ -24,6 +24,10 @@ from typing import Any, Callable, Iterable
 from ..db import tx
 
 
+class Cancelled(Exception):
+    """L'utilisateur a annulé le travail en cours : le job se termine sans erreur."""
+
+
 class PermanentError(Exception):
     """Erreur qu'aucun nouvel essai ne corrigera (fichier introuvable, requête refusée...)."""
 
@@ -122,9 +126,9 @@ class JobQueue:
                 lease = self.lease_by_kind.get(row["kind"], self.lease_seconds)
                 self.conn.execute(
                     """UPDATE job SET status = 'running', attempts = attempts + 1,
-                                      lease_until = ?, worker = ?, updated_at = ?
+                                      lease_until = ?, worker = ?, updated_at = ?, started_at = ?
                        WHERE id = ?""",
-                    (now + lease, self.worker_id, now, row["id"]),
+                    (now + lease, self.worker_id, now, now, row["id"]),
                 )
                 return Job(
                     id=row["id"],

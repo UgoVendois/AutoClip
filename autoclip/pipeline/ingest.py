@@ -3,8 +3,22 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
-from ..jobs.queue import PermanentError
+from ..jobs.queue import Cancelled, PermanentError
+
+StopCheck = Callable[[], bool] | None
+
+
+def _stop_hooks(should_stop: StopCheck) -> list:
+    """Crochet de progression yt-dlp qui interrompt le téléchargement sur annulation."""
+    if should_stop is None:
+        return []
+
+    def hook(_progress: dict) -> None:
+        if should_stop():
+            raise Cancelled("téléchargement annulé")
+    return [hook]
 
 
 def resolve_local(uri: str) -> Path:
@@ -14,7 +28,7 @@ def resolve_local(uri: str) -> Path:
     return path
 
 
-def download(url: str, directory: Path) -> Path:
+def download(url: str, directory: Path, should_stop: StopCheck = None) -> Path:
     """Télécharge dans `directory`. Si la vidéo y est déjà, ne retélécharge pas."""
     existing = sorted(directory.glob("video.*"))
     existing = [p for p in existing if p.suffix not in (".part", ".ytdl")]
@@ -32,6 +46,7 @@ def download(url: str, directory: Path) -> Path:
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "progress_hooks": _stop_hooks(should_stop),
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         try:
@@ -84,7 +99,7 @@ def download_section(url: str, start: float, end: float, dest: Path) -> Path:
     return found[0]
 
 
-def download_audio(url: str, dest: Path) -> Path:
+def download_audio(url: str, dest: Path, should_stop: StopCheck = None) -> Path:
     """Piste audio seule (bien plus légère que la vidéo), pour mesurer l'énergie."""
     existing = [p for p in dest.parent.glob(dest.name + ".*") if p.suffix not in (".part", ".ytdl")]
     if existing:
@@ -92,7 +107,8 @@ def download_audio(url: str, dest: Path) -> Path:
     yt_dlp = _ydl()
     dest.parent.mkdir(parents=True, exist_ok=True)
     opts = {"outtmpl": str(dest) + ".%(ext)s", "format": "worstaudio/bestaudio/worst",
-            "noplaylist": True, "quiet": True, "no_warnings": True}
+            "noplaylist": True, "quiet": True, "no_warnings": True,
+            "progress_hooks": _stop_hooks(should_stop)}
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
     found = [p for p in dest.parent.glob(dest.name + ".*") if p.suffix not in (".part", ".ytdl")]

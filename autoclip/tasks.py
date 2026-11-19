@@ -6,6 +6,7 @@ est déjà en cache ou en base et ré-enfile l'étape suivante avec une clé fix
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import sqlite3
@@ -16,7 +17,7 @@ from typing import Callable
 
 from . import services
 from .db import tx
-from .jobs.queue import JobQueue, PermanentError
+from .jobs.queue import Cancelled, JobQueue, PermanentError
 from .jobs.worker import Task
 from .pipeline import analyze, ingest, render
 from .pipeline import layout as lay
@@ -68,17 +69,32 @@ def _set_source(ctx: Context, source_id: int, **fields) -> None:
 
 # -- ingest ---------------------------------------------------------------------
 
+def _source_stop(ctx: Context, source_id: int):
+    def should_stop() -> bool:
+        return services.is_cancelled(ctx.conn.execute("SELECT error FROM source WHERE id = ?",
+                                                      (source_id,)).fetchone())
+    return should_stop
+
+
 def run_ingest(ctx: Context, payload: dict) -> dict:
     src = _source(ctx, payload["source_id"])
+    if services.is_cancelled(src):
+        return {"cancelled": True}
     if src["media_path"] and Path(src["media_path"]).is_file() and src["sha256"]:
         path, digest = Path(src["media_path"]), src["sha256"]
     else:
         if src["kind"] == "file":
             path = ingest.resolve_local(src["uri"])
         else:
-            path = ingest.download(src["uri"], _download_dir(ctx, src["uri"]))
+            try:
+                path = ingest.download(src["uri"], _download_dir(ctx, src["uri"]),
+                                       should_stop=_source_stop(ctx, src["id"]))
+            except Cancelled:
+                return {"cancelled": True}
         digest = sha256_file(path)
     with tx(ctx.conn):
+        if services.is_cancelled(_source(ctx, src["id"])):
+            return {"cancelled": True}
         _set_source(ctx, src["id"], media_path=str(path), sha256=digest, status="transcribe", error=None)
         ctx.queue.enqueue("transcribe", {"source_id": src["id"]}, key=f"transcribe:{src['id']}")
     return {"media": str(path)}
@@ -98,16 +114,34 @@ def transcript_path(ctx: Context, src: sqlite3.Row) -> Path:
     return ctx.cache.path("transcribe", name)
 
 
+def _transcribe(ctx: Context, media: Path, model: str, language: str | None, should_stop) -> dict:
+    """Appelle le transcripteur, avec l'arrêt sur annulation s'il le prend en charge."""
+    try:
+        accepts = "should_stop" in inspect.signature(ctx.transcriber).parameters
+    except (TypeError, ValueError):
+        accepts = False
+    if accepts:
+        return ctx.transcriber(media, model, language, should_stop=should_stop)
+    return ctx.transcriber(media, model, language)
+
+
 def run_transcribe(ctx: Context, payload: dict) -> dict:
     src = _source(ctx, payload["source_id"])
+    if services.is_cancelled(src):
+        return {"cancelled": True}
     path = transcript_path(ctx, src)
     if not path.exists():
         settings = services.get_settings(ctx.conn)
         log.info("transcription de %s (modèle %s)", src["media_path"], settings["whisper_model"])
-        data = ctx.transcriber(Path(src["media_path"]), settings["whisper_model"],
-                               settings["whisper_language"])
+        try:
+            data = _transcribe(ctx, Path(src["media_path"]), settings["whisper_model"],
+                               settings["whisper_language"], _source_stop(ctx, src["id"]))
+        except Cancelled:
+            return {"cancelled": True}
         Cache.write_json(path, data)
     with tx(ctx.conn):
+        if services.is_cancelled(_source(ctx, src["id"])):
+            return {"cancelled": True}
         _set_source(ctx, src["id"], status="analyze")
         ctx.queue.enqueue("analyze", {"source_id": src["id"]}, key=f"analyze:{src['id']}")
     return {"transcript": str(path)}
@@ -117,6 +151,8 @@ def run_transcribe(ctx: Context, payload: dict) -> dict:
 
 def run_analyze(ctx: Context, payload: dict) -> dict:
     src = _source(ctx, payload["source_id"])
+    if services.is_cancelled(src):
+        return {"cancelled": True}
     bot = services.get_bot(ctx.conn, src["bot_id"])
     settings = services.bot_settings(bot)
     words = Cache.read_json(transcript_path(ctx, src))["words"]

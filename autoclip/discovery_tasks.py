@@ -21,7 +21,7 @@ from .ai.budget import score_with_budget, today
 from .ai.providers import make_provider
 from .db import tx
 from .discovery import DiscoveredItem, get_discoverer
-from .jobs.queue import PermanentError
+from .jobs.queue import Cancelled, PermanentError
 from .jobs.worker import Task
 from .pipeline import analyze
 from .pipeline.cache import Cache
@@ -36,6 +36,14 @@ def _discovered(ctx, discovered_id: int) -> sqlite3.Row:
     if row is None:
         raise PermanentError(f"contenu découvert {discovered_id} supprimé")
     return row
+
+
+def _stop_check(ctx, discovered_id: int):
+    """Vrai dès que l'utilisateur a annulé l'analyse de ce contenu."""
+    def should_stop() -> bool:
+        return services.is_cancelled(ctx.conn.execute(
+            "SELECT error FROM discovered WHERE id = ?", (discovered_id,)).fetchone())
+    return should_stop
 
 
 def _item(row: sqlite3.Row) -> DiscoveredItem:
@@ -116,13 +124,20 @@ def run_presort(ctx, payload: dict) -> dict:
                                top_n=ai["max_windows"], margin=ai["margin_seconds"])
         kind = signal.kind
     else:
-        audio = disc.download_audio(item, _work_dir(ctx, row) / "audio")
-        duration = row["duration"] or media_duration(audio)
-        windows = energy_windows(loudness_series(audio), duration, window=ai["density_seconds"],
+        should_stop = _stop_check(ctx, row["id"])
+        try:
+            audio = disc.download_audio(item, _work_dir(ctx, row) / "audio", should_stop=should_stop)
+            duration = row["duration"] or media_duration(audio)
+            series = loudness_series(audio, should_stop=should_stop)
+        except Cancelled:
+            return {"cancelled": True}
+        windows = energy_windows(series, duration, window=ai["density_seconds"],
                                  top_n=ai["max_windows"], margin=ai["margin_seconds"])
         kind = "audio"
 
     with tx(ctx.conn):
+        if _discovered(ctx, row["id"])["status"] != "new":  # annulé pendant l'analyse
+            return {"cancelled": True}
         if not windows:
             _set(ctx, "discovered", row["id"], status="skipped", signal=kind,
                  error="aucun pic détecté", updated_at=ctx.clock())
@@ -164,6 +179,8 @@ def run_prepare_window(ctx, payload: dict) -> dict:
     if w["status"] != "pending":
         return {"skipped": w["status"]}
     row = _discovered(ctx, w["discovered_id"])
+    if services.is_cancelled(row):
+        return {"cancelled": True}
     disc = get_discoverer(row["platform"])
     media = disc.download_section(_item(row), w["start"], w["end"],
                                   _work_dir(ctx, row) / f"w{int(w['start'])}-{int(w['end'])}")
@@ -177,7 +194,8 @@ def run_prepare_window(ctx, payload: dict) -> dict:
     # Temps de l'extrait -> temps de la vidéo complète.
     words = [{**wd, "start": wd["start"] + w["start"], "end": wd["end"] + w["start"]} for wd in local_words]
     with tx(ctx.conn):
-        _set(ctx, "candidate_window", w["id"], media_path=str(media), words=json.dumps(words), status="ready")
+        ctx.conn.execute("UPDATE candidate_window SET media_path = ?, words = ?, status = 'ready' "
+                         "WHERE id = ? AND status = 'pending'", (str(media), json.dumps(words), w["id"]))
     _maybe_score(ctx, row["id"])
     return {"words": len(words)}
 
@@ -266,6 +284,8 @@ def run_ai_score(ctx, payload: dict) -> dict:
 
     now = ctx.clock()
     with tx(ctx.conn):
+        if services.is_cancelled(_discovered(ctx, row["id"])):  # annulé pendant l'appel à l'IA
+            return {"cancelled": True}
         for seg, w, sc in chosen:
             words = [wd for wd in json.loads(w["words"]) if wd["end"] > seg.start and wd["start"] < seg.end]
             cur = ctx.conn.execute(

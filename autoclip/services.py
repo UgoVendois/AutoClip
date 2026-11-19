@@ -342,6 +342,50 @@ def add_watch(conn: sqlite3.Connection, bot_id: int, platform: str, channel: str
                             (bot_id, platform, channel)).fetchone()["id"]
 
 
+# -- annulation d'une analyse ---------------------------------------------------------
+
+CANCELLED = "annulé"  # erreur posée sur un contenu ou une source annulés par l'utilisateur
+ACTIVE_DISCOVERED = ("new", "presorted", "scoring", "deferred")
+ACTIVE_SOURCE = ("ingest", "transcribe", "analyze")
+
+
+def is_cancelled(row: sqlite3.Row | None) -> bool:
+    return row is not None and row["error"] == CANCELLED
+
+
+def cancel_discovered(conn: sqlite3.Connection, discovered_id: int) -> None:
+    """Arrête l'analyse d'une VOD. Le travail en cours s'interrompt (téléchargement,
+    mesure du son) ; les étapes suivantes ne démarrent pas. Les clips déjà faits restent."""
+    row = conn.execute("SELECT status, source_id FROM discovered WHERE id = ?", (discovered_id,)).fetchone()
+    if row is None:
+        raise ServiceError("contenu introuvable")
+    if row["status"] not in ACTIVE_DISCOVERED:
+        raise ServiceError("cette analyse est déjà terminée")
+    with tx(conn):
+        conn.execute("UPDATE discovered SET status = 'skipped', error = ?, updated_at = ? WHERE id = ?",
+                     (CANCELLED, time.time(), discovered_id))
+        conn.execute("UPDATE candidate_window SET status = 'failed', error = ? "
+                     "WHERE discovered_id = ? AND status IN ('pending', 'ready')", (CANCELLED, discovered_id))
+        if row["source_id"]:
+            conn.execute("UPDATE source SET status = 'failed', error = ? WHERE id = ? AND status IN (?, ?, ?)",
+                         (CANCELLED, row["source_id"], *ACTIVE_SOURCE))
+
+
+def cancel_source(conn: sqlite3.Connection, source_id: int) -> None:
+    row = conn.execute("SELECT status FROM source WHERE id = ?", (source_id,)).fetchone()
+    if row is None:
+        raise ServiceError("source introuvable")
+    linked = conn.execute("SELECT id FROM discovered WHERE source_id = ? AND status IN (?, ?, ?, ?)",
+                          (source_id, *ACTIVE_DISCOVERED)).fetchone()
+    if linked is not None:  # VOD trouvée par la découverte : on arrête toute son analyse
+        cancel_discovered(conn, linked["id"])
+        return
+    if row["status"] not in ACTIVE_SOURCE:
+        raise ServiceError("cette analyse est déjà terminée")
+    with tx(conn):
+        conn.execute("UPDATE source SET status = 'failed', error = ? WHERE id = ?", (CANCELLED, source_id))
+
+
 def remove_watch(conn: sqlite3.Connection, watch_id: int) -> None:
     """Supprime une chaîne surveillée. Une chaîne trouvée par l'IA est seulement
     écartée, pour que l'éclaireur ne la repropose pas."""

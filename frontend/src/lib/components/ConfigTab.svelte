@@ -4,6 +4,7 @@
   import { SOURCE_STATUS } from '../format.js';
   import { app, askConfirm, refreshBots, run } from '../state.svelte.js';
   import Badge from './Badge.svelte';
+  import EtaCancel from './EtaCancel.svelte';
   import Icon from './Icon.svelte';
   import AccountLink from './AccountLink.svelte';
   import Section from './Section.svelte';
@@ -77,6 +78,16 @@
       newSource = '';
       reload();
     }
+  }
+
+  async function cancelSource(src) {
+    const ok = await askConfirm({
+      title: 'Annuler cette analyse ?',
+      message: `« ${src.uri} » ne sera plus analysée. Les clips déjà créés sont conservés.`,
+      confirmLabel: "Arrêter l'analyse",
+      danger: true,
+    });
+    if (ok && (await run(api.post(`/sources/${src.id}/cancel`), 'Analyse annulée'))) reload();
   }
 
   async function browse() {
@@ -161,9 +172,12 @@
             <Icon name={src.kind === 'url' ? 'globe' : 'folder'} size={16} class="shrink-0 text-faint" />
             <div class="min-w-0 flex-1">
               <p class="truncate" title={src.uri}>{src.uri}</p>
-              {#if src.error}<p class="mt-0.5 text-xs text-danger">{src.error}</p>{/if}
+              {#if src.error && src.error !== 'annulé'}<p class="mt-0.5 text-xs text-danger">{src.error}</p>{/if}
             </div>
-            <Badge status={src.status} map={SOURCE_STATUS} />
+            <Badge status={src.error === 'annulé' ? 'cancelled' : src.status} map={SOURCE_STATUS} />
+            {#if ['ingest', 'transcribe', 'analyze'].includes(src.status)}
+              <EtaCancel eta={src.eta_seconds} label="Annuler l'analyse" oncancel={() => cancelSource(src)} />
+            {/if}
           </li>
         {/each}
       </ul>

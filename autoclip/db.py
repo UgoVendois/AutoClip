@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS bot (
@@ -302,6 +302,10 @@ CREATE TABLE IF NOT EXISTS scout_run (
     created_at  REAL NOT NULL,
     finished_at REAL
 );
+""",
+    6: """
+-- Début du dernier essai de chaque job : durées réelles pour estimer les temps restants.
+ALTER TABLE job ADD COLUMN started_at REAL;
 """,
 }
 

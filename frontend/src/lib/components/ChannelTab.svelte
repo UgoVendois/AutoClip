@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import { api } from '../api.js';
   import { app, askConfirm, run, toast } from '../state.svelte.js';
+  import EtaCancel from './EtaCancel.svelte';
   import Icon from './Icon.svelte';
   import AccountLink from './AccountLink.svelte';
   import Section from './Section.svelte';
@@ -106,6 +107,12 @@
   async function regenerate() {
     busy = true;
     if ((await saveChoice()) && (await run(api.post(`/identity/${ident.id}/images`), 'Nouveaux visuels en cours'))) await load();
+    busy = false;
+  }
+
+  async function cancelImages() {
+    busy = true;
+    if (await run(api.post(`/identity/${ident.id}/images/cancel`), 'Génération des visuels annulée')) await load();
     busy = false;
   }
 
@@ -239,10 +246,16 @@
               </div>
             </div>
           </div>
+        {:else if ident.images_status === 'failed' && ident.error === 'annulé'}
+          <p class="text-sm text-muted">Génération annulée. Clique sur Régénérer pour relancer.</p>
         {:else if ident.images_status === 'failed'}
           <p class="rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-sm text-danger">{ident.error}</p>
         {:else}
-          <p class="flex items-center gap-2 text-sm text-muted"><span class="spinner"></span> Création des visuels pour « {form.name} »…</p>
+          <div class="flex items-center gap-2 text-sm text-muted">
+            <span class="spinner"></span>
+            <span class="flex-1">Création des visuels pour « {form.name} »…</span>
+            <EtaCancel eta={ident.images_eta} label="Annuler la génération" disabled={busy} oncancel={cancelImages} />
+          </div>
         {/if}
         {#if dirty && ident.images_status === 'ready'}
           <p class="hint mt-3">Nom modifié ? Clique sur Régénérer pour l'intégrer à la bannière.</p>

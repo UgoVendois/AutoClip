@@ -78,11 +78,11 @@ class SourceDiscoverer(ABC):
 
         return download_section(item.url, start, end, dest)
 
-    def download_audio(self, item: DiscoveredItem, dest: Path) -> Path:
+    def download_audio(self, item: DiscoveredItem, dest: Path, should_stop=None) -> Path:
         """Piste audio seule, pour le signal d'énergie quand il n'y a pas de chat."""
         from ..pipeline.ingest import download_audio
 
-        return download_audio(item.url, dest)
+        return download_audio(item.url, dest, should_stop)
 
 
 REGISTRY: dict[str, type[SourceDiscoverer]] = {}

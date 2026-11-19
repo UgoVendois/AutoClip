@@ -195,6 +195,22 @@ def regenerate_images(conn: sqlite3.Connection, queue: JobQueue, identity_id: in
         queue.enqueue("identity_images", {"identity_id": identity_id}, key=f"identity_images:{identity_id}:{now}")
 
 
+def cancel_images(conn: sqlite3.Connection, identity_id: int) -> None:
+    """Abandonne la génération des visuels. Un appel déjà parti chez le fournisseur
+    se termine, mais son résultat est ignoré."""
+    row = get(conn, identity_id)
+    if row["images_status"] not in ("pending", "generating"):
+        raise services.ServiceError("aucune génération de visuels en cours")
+    with tx(conn):
+        conn.execute("UPDATE identity SET images_status = 'failed', error = ?, updated_at = ? WHERE id = ?",
+                     (services.CANCELLED, time.time(), identity_id))
+
+
+def _images_cancelled(ctx, identity_id: int) -> bool:
+    row = ctx.conn.execute("SELECT images_status, error FROM identity WHERE id = ?", (identity_id,)).fetchone()
+    return row is not None and row["images_status"] == "failed" and services.is_cancelled(row)
+
+
 def apply(conn: sqlite3.Connection, queue: JobQueue, identity_id: int) -> None:
     row = get(conn, identity_id)
     if row["status"] not in ("ready", "applied"):
@@ -283,6 +299,8 @@ def run_identity_images(ctx, payload: dict) -> dict:
     row = get_or_fail(ctx, payload["identity_id"])
     if row["proposal"] is None:
         raise PermanentError("aucune proposition à illustrer")
+    if _images_cancelled(ctx, row["id"]):
+        return {"cancelled": True}
     _set(ctx, row["id"], images_status="generating", error=None)
     proposal, choice = json.loads(row["proposal"]), json.loads(row["choice"])
     if ctx.image_override is not None:
@@ -295,10 +313,14 @@ def run_identity_images(ctx, payload: dict) -> dict:
         generator.context = {"name": choice["name"], "tagline": proposal["tagline"], "palette": proposal["palette"]}
     paths = {}
     for kind, ext in (("avatar", "png"), ("banner", "jpg")):
+        if _images_cancelled(ctx, row["id"]):
+            return {"cancelled": True}
         prompt = image_prompt(kind, choice, proposal)
         out = ctx.cache.path("identity", f"{row['id']}-{kind}-{short_hash(prompt, generator.name, ctx.clock())}.{ext}")
         finalize(generator.generate(prompt, kind), out, kind)
         paths[kind] = str(out)
+    if _images_cancelled(ctx, row["id"]):
+        return {"cancelled": True}
     _set(ctx, row["id"], images_status="ready", avatar_path=paths["avatar"], banner_path=paths["banner"])
     return paths
 
@@ -417,7 +439,8 @@ def dead_generate(ctx, payload: dict, error: str) -> None:
 
 
 def dead_images(ctx, payload: dict, error: str) -> None:
-    _set(ctx, payload["identity_id"], images_status="failed", error=error)
+    if not _images_cancelled(ctx, payload["identity_id"]):
+        _set(ctx, payload["identity_id"], images_status="failed", error=error)
 
 
 def dead_apply(ctx, payload: dict, error: str) -> None:

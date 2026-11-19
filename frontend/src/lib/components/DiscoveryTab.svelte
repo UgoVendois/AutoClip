@@ -3,6 +3,7 @@
   import { api } from '../api.js';
   import { fmtDate } from '../format.js';
   import { askConfirm, run, toast } from '../state.svelte.js';
+  import EtaCancel from './EtaCancel.svelte';
   import Icon from './Icon.svelte';
   import ModelPicker from './ModelPicker.svelte';
   import Section from './Section.svelte';
@@ -40,6 +41,7 @@
     deferred: { label: 'Reporté (budget IA)', cls: 'badge badge-warning' },
     done: { label: 'Terminé', cls: 'badge badge-success' },
     skipped: { label: 'Aucun moment fort', cls: 'badge' },
+    cancelled: { label: 'Annulé', cls: 'badge' },
     failed: { label: 'Échec', cls: 'badge badge-danger' },
   };
   const SIGNALS = { chat: 'pics du chat', comments: 'commentaires horodatés', audio: 'énergie du son' };
@@ -165,6 +167,21 @@
       danger: true,
     });
     if (ok && (await run(api.del(`/watches/${w.id}`), 'Chaîne retirée'))) reload();
+  }
+
+  const ACTIVE = ['new', 'presorted', 'scoring', 'deferred'];
+
+  async function cancelDiscovered(d) {
+    const ok = await askConfirm({
+      title: 'Annuler cette analyse ?',
+      message: `« ${d.title || d.url} » ne sera plus analysée. Les clips déjà créés sont conservés.`,
+      confirmLabel: "Arrêter l'analyse",
+      danger: true,
+    });
+    if (ok && (await run(api.post(`/discovered/${d.id}/cancel`), 'Analyse annulée'))) {
+      load();
+      reload();
+    }
   }
 
   async function discoverNow() {
@@ -399,14 +416,17 @@
     {#if discovered.length}
       <ul class="divide-y divide-line rounded-xl border border-line">
         {#each discovered as d (d.id)}
-          {@const st = DISCOVERED[d.status] ?? { label: d.status, cls: 'badge' }}
+          {@const st = DISCOVERED[d.error === 'annulé' ? 'cancelled' : d.status] ?? { label: d.status, cls: 'badge' }}
           <li class="flex items-center gap-3 px-4 py-2.5 text-sm">
             <span class="w-16 text-xs font-medium uppercase text-faint">{d.platform}</span>
             <div class="min-w-0 flex-1">
               <a class="block truncate hover:underline" href={d.url} target="_blank" rel="noreferrer" title={d.title}>{d.title || d.url}</a>
-              <p class="text-xs text-faint">{fmtDate(d.created_at)}{d.signal ? ` · ${SIGNALS[d.signal] ?? d.signal}` : ''}{d.error ? ` · ${d.error}` : ''}</p>
+              <p class="text-xs text-faint">{fmtDate(d.created_at)}{d.signal ? ` · ${SIGNALS[d.signal] ?? d.signal}` : ''}{d.error && d.error !== 'annulé' ? ` · ${d.error}` : ''}</p>
             </div>
             <span class={st.cls}>{st.label}</span>
+            {#if ACTIVE.includes(d.status)}
+              <EtaCancel eta={d.eta_seconds} label="Annuler l'analyse" oncancel={() => cancelDiscovered(d)} />
+            {/if}
           </li>
         {/each}
       </ul>

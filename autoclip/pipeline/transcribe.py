@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import Protocol
 
-from ..jobs.queue import PermanentError
+from ..jobs.queue import Cancelled, PermanentError
 
 Word = dict  # {"start": float, "end": float, "word": str}
 
@@ -53,7 +53,7 @@ class FasterWhisperTranscriber:
                                                   compute_type=self.compute_type)
             return self._models[name]
 
-    def __call__(self, media: Path, model: str, language: str | None) -> dict:
+    def __call__(self, media: Path, model: str, language: str | None, should_stop=None) -> dict:
         segments, info = self._model(model).transcribe(
             decode_audio(media),
             language=language,
@@ -62,7 +62,9 @@ class FasterWhisperTranscriber:
             beam_size=5,
         )
         words: list[Word] = []
-        for segment in segments:
+        for segment in segments:  # générateur : la transcription avance segment par segment
+            if should_stop is not None and should_stop():
+                raise Cancelled("transcription annulée")
             for w in segment.words or []:
                 words.append({"start": round(w.start, 3), "end": round(w.end, 3), "word": w.word})
         return {"language": info.language, "duration": info.duration, "words": words}
