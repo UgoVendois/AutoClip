@@ -23,6 +23,10 @@ CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
     "openai": ("api_key",),
     "mistral": ("api_key",),
 }
+# Champs facultatifs, gardés s'ils sont remplis.
+OPTIONAL_FIELDS: dict[str, tuple[str, ...]] = {
+    "instagram": ("config_id",),  # Facebook Login for Business : configuration de connexion
+}
 
 _backend: Any = None  # remplaçable dans les tests
 
@@ -93,7 +97,13 @@ def set_credentials(platform: str, values: dict[str, str]) -> None:
     missing = [f for f in fields if not values.get(f)]
     if missing:
         raise ValueError(f"champs manquants pour {platform} : {', '.join(missing)}")
-    set_json(credentials_key(platform), {f: values[f] for f in fields})
+    data = {f: values[f] for f in fields}
+    data.update({f: values[f] for f in OPTIONAL_FIELDS.get(platform, ()) if values.get(f)})
+    set_json(credentials_key(platform), data)
+
+
+def get_credentials(platform: str) -> dict | None:
+    return get_json(credentials_key(platform))
 
 
 def credentials_status() -> dict[str, bool]:

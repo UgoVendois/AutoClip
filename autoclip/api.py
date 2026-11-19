@@ -146,8 +146,8 @@ def create_app(home: Path) -> FastAPI:
                     s["eta_seconds"] = remaining.get(key)
         bot["accounts"] = [
             {"id": r["id"], "platform": r["platform"], "display_name": r["display_name"],
-             "url": services.account_url(r["platform"], r["keyring_ref"])}
-            for r in conn.execute("SELECT a.id, a.platform, a.display_name, a.keyring_ref FROM account a "
+             "url": services.account_url(r["platform"], r["keyring_ref"], r["url"])}
+            for r in conn.execute("SELECT a.id, a.platform, a.display_name, a.keyring_ref, a.url FROM account a "
                                   "JOIN bot_account ba ON ba.account_id = a.id WHERE ba.bot_id = ? ORDER BY a.id",
                                   (bot_id,))]
         sched = conn.execute("SELECT * FROM schedule WHERE bot_id = ?", (bot_id,)).fetchone()
@@ -452,7 +452,7 @@ def create_app(home: Path) -> FastAPI:
     @api.get("/publish-jobs")
     def publish_jobs(bot_id: int | None = None, conn=Depends(get_conn)):
         query = """SELECT pj.*, c.title, c.bot_id, a.display_name AS account_name, a.platform,
-                          a.keyring_ref AS account_ref
+                          a.keyring_ref AS account_ref, a.url AS account_stored_url
                    FROM publish_job pj JOIN clip c ON c.id = pj.clip_id
                    JOIN account a ON a.id = pj.account_id"""
         params: list[Any] = []
@@ -461,7 +461,7 @@ def create_app(home: Path) -> FastAPI:
             params.append(bot_id)
         rows = _rows(conn.execute(query + " ORDER BY COALESCE(pj.scheduled_at, 1e18), pj.id", params))
         for r in rows:
-            r["account_url"] = services.account_url(r["platform"], r.pop("account_ref"))
+            r["account_url"] = services.account_url(r["platform"], r.pop("account_ref"), r.pop("account_stored_url"))
         return rows
 
     # -- file de jobs -------------------------------------------------------------
@@ -497,7 +497,8 @@ def create_app(home: Path) -> FastAPI:
     @api.get("/credentials")
     def credentials():
         """Quelles clés sont enregistrées (jamais leur valeur)."""
-        return {"fields": secrets.CREDENTIAL_FIELDS, "configured": secrets.credentials_status()}
+        return {"fields": secrets.CREDENTIAL_FIELDS, "optional": secrets.OPTIONAL_FIELDS,
+                "configured": secrets.credentials_status()}
 
     @api.put("/credentials/{platform}")
     def put_credentials(platform: str, values: dict[str, Any]):
@@ -529,68 +530,72 @@ def create_app(home: Path) -> FastAPI:
     def accounts(conn=Depends(get_conn)):
         from .publishers.youtube import has_manage_scope
 
-        rows = conn.execute("SELECT id, platform, display_name, keyring_ref, created_at FROM account ORDER BY id")
+        rows = conn.execute("SELECT id, platform, display_name, keyring_ref, url, created_at FROM account ORDER BY id")
         out = []
         for r in rows:
             item = dict(r)
             ref = item.pop("keyring_ref")
             item["connected"] = ref is not None
-            item["url"] = services.account_url(item["platform"], ref)
+            item["url"] = services.account_url(item["platform"], ref, item["url"])
             # Jeton antérieur à l'agent identité : il faut reconnecter pour gérer la chaîne.
             item["can_manage"] = item["platform"] == "youtube" and ref is not None and has_manage_scope(ref)
             out.append(item)
         return out
 
-    youtube_connect: dict[str, Any] = {}
+    connections: dict[str, dict[str, Any]] = {}  # plateforme -> connexion en cours
 
     @api.post("/accounts/{platform}/connect")
     def connect(platform: str):
-        """Démarre la connexion OAuth : renvoie l'URL Google tout de suite, le retour
-        est attendu en arrière-plan (GET pour suivre, DELETE pour annuler)."""
-        if platform != "youtube":
-            raise HTTPException(400, f"{platform} n'est pas encore pris en charge (youtube uniquement)")
+        """Démarre la connexion OAuth : renvoie l'URL d'autorisation tout de suite, le
+        retour est attendu en arrière-plan (GET pour suivre, DELETE pour annuler)."""
         import threading
         import webbrowser
 
-        from .publishers.youtube import ConnectFlow, OAuthCancelled, save_connected_account
+        from .publishers import CONNECTABLE, connect_flow
+        from .publishers.oauth import OAuthCancelled
 
-        if (old := youtube_connect.get("flow")) is not None:
+        if platform not in CONNECTABLE:
+            raise HTTPException(400, f"connexion impossible pour {platform}")
+        current = connections.setdefault(platform, {})
+        if (old := current.get("flow")) is not None:
             old.cancel()
         try:
-            flow = ConnectFlow()
+            flow = connect_flow(platform)
+        except OSError as exc:  # port de retour déjà pris (Instagram : port fixe)
+            raise HTTPException(400, f"port de connexion occupé : réessaie dans un instant ({exc})") from exc
         except Exception as exc:  # noqa: BLE001 : clés absentes...
             raise HTTPException(400, str(exc)) from exc
-        youtube_connect.clear()
-        youtube_connect.update(flow=flow, state="pending", auth_url=flow.auth_url)
+        current.clear()
+        current.update(flow=flow, state="pending", auth_url=flow.auth_url)
 
         def wait():
             try:
-                creds = flow.wait_credentials()
                 conn = db.connect(paths.db)
                 try:
-                    account_id = save_connected_account(conn, creds)
+                    account_id = flow.wait_and_save(conn)
                 finally:
                     conn.close()
-                if youtube_connect.get("flow") is flow:
-                    youtube_connect.update(state="connected", account_id=account_id)
+                if current.get("flow") is flow:
+                    current.update(state="connected", account_id=account_id)
             except OAuthCancelled:
-                if youtube_connect.get("flow") is flow:
-                    youtube_connect.update(state="cancelled")
+                if current.get("flow") is flow:
+                    current.update(state="cancelled")
             except Exception as exc:  # noqa: BLE001
-                if youtube_connect.get("flow") is flow:
-                    youtube_connect.update(state="error", error=str(exc))
+                if current.get("flow") is flow:
+                    current.update(state="error", error=str(exc))
 
-        threading.Thread(target=wait, daemon=True, name="youtube-oauth").start()
+        threading.Thread(target=wait, daemon=True, name=f"{platform}-oauth").start()
         webbrowser.open(flow.auth_url, new=1)
         return {"auth_url": flow.auth_url, "timeout": int(flow.deadline - time.time())}
 
     @api.get("/accounts/{platform}/connect")
     def connect_status(platform: str):
-        return {k: v for k, v in youtube_connect.items() if k != "flow"} or {"state": "idle"}
+        current = connections.get(platform, {})
+        return {k: v for k, v in current.items() if k != "flow"} or {"state": "idle"}
 
     @api.delete("/accounts/{platform}/connect")
     def connect_cancel(platform: str):
-        if (flow := youtube_connect.get("flow")) is not None:
+        if (flow := connections.get(platform, {}).get("flow")) is not None:
             flow.cancel()
         return {"ok": True}
 

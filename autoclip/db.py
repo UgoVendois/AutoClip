@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS bot (
@@ -311,6 +311,10 @@ ALTER TABLE job ADD COLUMN started_at REAL;
 -- Langue parlée (ISO 639-1, détectée par Whisper) : titres et métadonnées dans cette langue.
 ALTER TABLE candidate_window ADD COLUMN language TEXT;
 ALTER TABLE clip ADD COLUMN language TEXT;
+""",
+    8: """
+-- Lien public du compte (profil TikTok, Instagram) enregistré à la connexion.
+ALTER TABLE account ADD COLUMN url TEXT;
 """,
 }
 

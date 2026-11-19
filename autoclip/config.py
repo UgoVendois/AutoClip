@@ -36,6 +36,9 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "whisper_model": "small",
     "whisper_language": None,  # None = détection automatique
     "youtube_privacy": "private",  # private | unlisted | public
+    # TikTok : SELF_ONLY | MUTUAL_FOLLOW_FRIENDS | FOLLOWER_OF_CREATOR | PUBLIC_TO_EVERYONE.
+    # App non auditée : TikTok n'accepte que SELF_ONLY (et un compte privé).
+    "tiktok_privacy": "SELF_ONLY",
     "default_dry_run": True,
     "ui_theme": "system",  # system | light | dark
     # Agent identité de chaîne (textes, puis visuels).

@@ -1,6 +1,6 @@
 # AutoClip
 
-Démon Linux qui transforme des vidéos longues en Shorts : transcription, choix des meilleurs extraits, recadrage 9:16 avec sous-titres mot à mot, validation manuelle, puis publication planifiée au compte-gouttes sur YouTube Shorts.
+Démon Linux qui transforme des vidéos longues en Shorts : transcription, choix des meilleurs extraits, recadrage 9:16 avec sous-titres mot à mot, validation manuelle, puis publication planifiée au compte-gouttes sur YouTube Shorts, TikTok et Instagram Reels.
 
 Un démon Python fait le travail ; une fenêtre de bureau (Svelte dans pywebview) le pilote : bots, validation des clips, planning, statistiques, clés d'API.
 
@@ -108,6 +108,14 @@ autoclip identity show 1
 autoclip identity apply 1
 autoclip identity models gemini # modèles disponibles avec ta clé
 ```
+
+## Publier sur TikTok et Instagram
+
+Paramètres > Comptes connectés : **Connecter TikTok** ou **Connecter Instagram** (comme pour YouTube : page d'autorisation dans le navigateur, retour local, annulable). Lie ensuite le compte au bot (Configuration > Comptes cibles) : chaque clip validé part sur tous les comptes liés, selon le planning.
+
+- **TikTok** (Login Kit Desktop + Content Posting API, Direct Post) : adresse de redirection `http://127.0.0.1:*/callback/`, scopes `user.info.basic`, `user.info.profile`, `video.publish`. Envoi du fichier par morceaux, puis suivi jusqu'à la publication. Tant que l'app n'est pas auditée par TikTok, les vidéos sont privées et le compte TikTok doit être privé ; la visibilité voulue se règle dans Paramètres > Publication.
+- **Instagram** (Facebook Login for Business, Graph API v27.0) : compte Instagram professionnel relié à une Page Facebook, adresse de redirection `http://localhost:8767/callback/`. Reel créé, fichier envoyé (`rupload.facebook.com`), attente du traitement, publication, lien permanent. Limites Meta : 300 Mo, 15 min, 50 publications par 24 h.
+- Les jetons restent dans le trousseau (TikTok : renouvelés automatiquement ; Instagram : jetons de Page sans expiration). Un envoi interrompu reprend sans publier deux fois (état dans `cache/publish/`).
 
 ## Tests
 

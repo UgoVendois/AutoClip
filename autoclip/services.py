@@ -34,6 +34,10 @@ def update_settings(conn: sqlite3.Connection, changes: dict[str, Any]) -> dict[s
         raise ServiceError(f"réglages inconnus : {', '.join(sorted(unknown))}")
     if changes.get("youtube_privacy", "private") not in ("private", "unlisted", "public"):
         raise ServiceError("youtube_privacy : private, unlisted ou public")
+    from .publishers.tiktok import PRIVACY_LEVELS
+
+    if changes.get("tiktok_privacy", "SELF_ONLY") not in PRIVACY_LEVELS:
+        raise ServiceError(f"tiktok_privacy : {', '.join(PRIVACY_LEVELS)}")
     if changes.get("ui_theme", "system") not in ("system", "light", "dark"):
         raise ServiceError("ui_theme : system, light ou dark")
     if changes.get("identity_provider", "anthropic") not in AI_PROVIDERS[1:]:
@@ -127,8 +131,11 @@ def delete_bot(conn: sqlite3.Connection, bot_id: int) -> None:
         conn.execute("DELETE FROM bot WHERE id = ?", (bot_id,))
 
 
-def account_url(platform: str, keyring_ref: str | None) -> str | None:
-    """Page publique de la chaîne (l'identifiant vient de la référence du jeton, pas du secret)."""
+def account_url(platform: str, keyring_ref: str | None, stored: str | None = None) -> str | None:
+    """Page publique du compte : lien enregistré à la connexion, sinon (YouTube) déduit
+    de la référence du jeton (l'identifiant de chaîne, pas le secret)."""
+    if stored:
+        return stored
     if platform == "youtube" and keyring_ref and keyring_ref.startswith("token:youtube:"):
         return f"https://www.youtube.com/channel/{keyring_ref.removeprefix('token:youtube:')}"
     return None

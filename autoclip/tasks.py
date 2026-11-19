@@ -52,7 +52,7 @@ class Context:
             return DryRunPublisher(self.cache)
         if self.publisher_override:
             return self.publisher_override(platform)
-        return publisher_for_platform(platform)
+        return publisher_for_platform(platform, self.cache, services.get_settings(self.conn))
 
 
 def _source(ctx: Context, source_id: int) -> sqlite3.Row:

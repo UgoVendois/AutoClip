@@ -29,13 +29,13 @@
     },
     tiktok: {
       name: 'TikTok',
-      help: "Clés d'une app TikTok for Developers (Content Posting API). Connecteur prévu dans une prochaine phase.",
+      help: "Client key et Client secret d'une app TikTok for Developers avec Login Kit (Desktop) et Content Posting API (Direct Post). Ajoute l'adresse de redirection http://127.0.0.1:*/callback/ dans Login Kit › Desktop.",
       url: 'https://developers.tiktok.com/apps',
       urlLabel: 'TikTok for Developers',
     },
     instagram: {
       name: 'Instagram',
-      help: "App Meta avec l'API Instagram Graph. Connecteur prévu dans une prochaine phase.",
+      help: "App ID et App secret d'une app Meta (type Entreprise) avec Facebook Login for Business et Instagram. Ajoute http://localhost:8767/callback/ dans les URI de redirection OAuth valides. Configuration ID : facultatif, si ta connexion Facebook Login for Business en demande une.",
       url: 'https://developers.facebook.com/',
       urlLabel: 'Meta for Developers',
     },
@@ -110,7 +110,19 @@
     app_id: 'App ID',
     app_secret: 'App secret',
     api_key: "Clé d'API",
+    config_id: 'Configuration ID (facultatif)',
   };
+  const SOCIAL = {
+    youtube: { name: 'YouTube', button: 'Connecter une chaîne YouTube', done: 'Chaîne YouTube connectée', site: 'Google' },
+    tiktok: { name: 'TikTok', button: 'Connecter TikTok', done: 'Compte TikTok connecté', site: 'TikTok' },
+    instagram: { name: 'Instagram', button: 'Connecter Instagram', done: 'Compte Instagram connecté', site: 'Facebook' },
+  };
+  const TIKTOK_PRIVACY = [
+    { value: 'SELF_ONLY', label: 'Moi uniquement (seule option tant que l’app n’est pas auditée)' },
+    { value: 'MUTUAL_FOLLOW_FRIENDS', label: 'Amis' },
+    { value: 'FOLLOWER_OF_CREATOR', label: 'Abonnés' },
+    { value: 'PUBLIC_TO_EVERYONE', label: 'Tout le monde' },
+  ];
   const MODELS = [
     { value: 'tiny', label: 'tiny : très rapide, approximatif' },
     { value: 'base', label: 'base : rapide' },
@@ -132,13 +144,13 @@
   let forms = $state({});
   let accounts = $state([]);
   let status = $state(null);
-  let connecting = $state(false);
+  let connecting = $state(null); // plateforme en cours de connexion
   let fileInput = $state();
 
   async function loadCreds() {
     creds = await api.get('/credentials');
     for (const [platform, fields] of Object.entries(creds.fields)) {
-      forms[platform] = Object.fromEntries(fields.map((f) => [f, '']));
+      forms[platform] = Object.fromEntries([...fields, ...(creds.optional?.[platform] ?? [])].map((f) => [f, '']));
     }
   }
 
@@ -242,22 +254,22 @@
   function stopPolling() {
     clearInterval(oauthTimer);
     oauthTimer = null;
-    connecting = false;
+    connecting = null;
   }
 
-  async function connectYoutube() {
-    connecting = true;
-    const started = await run(api.post('/accounts/youtube/connect'));
+  async function connectAccount(platform) {
+    connecting = platform;
+    const started = await run(api.post(`/accounts/${platform}/connect`));
     if (!started) {
-      connecting = false;
+      connecting = null;
       return;
     }
-    oauth = { auth_url: started.auth_url, remaining: started.timeout, error: null };
+    oauth = { platform, auth_url: started.auth_url, remaining: started.timeout, error: null };
     oauthTimer = setInterval(async () => {
       oauth.remaining = Math.max(0, oauth.remaining - 1.5);
       let st;
       try {
-        st = await api.get('/accounts/youtube/connect');
+        st = await api.get(`/accounts/${platform}/connect`);
       } catch {
         return;
       }
@@ -265,7 +277,7 @@
       stopPolling();
       if (st.state === 'connected') {
         oauth = null;
-        toast('Chaîne YouTube connectée', 'success');
+        toast(SOCIAL[platform].done, 'success');
         loadAccounts();
       } else if (st.state === 'error') {
         oauth = { ...oauth, error: st.error };
@@ -276,7 +288,7 @@
   }
 
   async function cancelConnect() {
-    await run(api.del('/accounts/youtube/connect'));
+    await run(api.del(`/accounts/${oauth?.platform ?? connecting}/connect`));
     stopPolling();
     oauth = null;
   }
@@ -330,6 +342,13 @@
               <option value="public">Publique</option>
             </select>
             <p class="hint">Tant que Google n'a pas audité ton projet, l'API force les vidéos en privé.</p>
+          </div>
+          <div>
+            <label class="label" for="tiktok-privacy">Visibilité sur TikTok</label>
+            <select id="tiktok-privacy" class="input" value={app.settings.tiktok_privacy} onchange={(e) => save('tiktok_privacy', e.target.value)}>
+              {#each TIKTOK_PRIVACY as p}<option value={p.value}>{p.label}</option>{/each}
+            </select>
+            <p class="hint">App TikTok non auditée : publication privée uniquement, sur un compte TikTok privé. Si l'option choisie n'est pas permise, AutoClip publie en « Moi uniquement ».</p>
           </div>
           <div class="flex items-start justify-between gap-4">
             <div>
@@ -450,7 +469,7 @@
                 {/if}
                 {#if forms[platform]}
                   <form class="grid gap-3 md:grid-cols-2" onsubmit={(e) => { e.preventDefault(); saveCreds(platform); }}>
-                    {#each fields as field}
+                    {#each [...fields, ...(creds.optional?.[platform] ?? [])] as field}
                       <div>
                         <label class="label" for="{platform}-{field}">{FIELD_LABELS[field] ?? field}</label>
                         <input
@@ -489,7 +508,7 @@
       {/if}
     </Section>
 
-    <Section title="Comptes connectés" icon="youtube" description="Chaînes sur lesquelles tes bots peuvent publier. Lie-les à un bot dans sa configuration.">
+    <Section title="Comptes connectés" icon="share" description="Chaînes YouTube et comptes TikTok et Instagram sur lesquels tes bots publient. Lie-les à un bot dans sa configuration (Comptes cibles).">
       {#if accounts.length}
         <ul class="mb-4 divide-y divide-line rounded-xl border border-line">
           {#each accounts as account (account.id)}
@@ -498,7 +517,7 @@
               <AccountLink class="flex-1" name={account.display_name} url={account.url} />
               {#if !account.connected}<span class="badge" title="Compte utilisé pour les dry runs">Simulé</span>{/if}
               {#if account.connected && account.platform === 'youtube' && !account.can_manage}
-                <button class="badge badge-warning" title="Nouvelle autorisation nécessaire pour la bannière, la description et les playlists" onclick={connectYoutube} disabled={connecting}>
+                <button class="badge badge-warning" title="Nouvelle autorisation nécessaire pour la bannière, la description et les playlists" onclick={() => connectAccount('youtube')} disabled={Boolean(connecting)}>
                   <Icon name="refresh" size={11} /> Reconnecter
                 </button>
               {/if}
@@ -510,14 +529,16 @@
         </ul>
       {/if}
       <div class="flex flex-wrap items-center gap-3">
-        <button class="btn btn-primary" disabled={connecting || !creds?.configured.youtube} onclick={connectYoutube}>
-          {#if connecting}<span class="spinner"></span>{:else}<Icon name="youtube" />{/if}
-          Connecter une chaîne YouTube
-        </button>
+        {#each Object.entries(SOCIAL) as [platform, s] (platform)}
+          <button class="btn {platform === 'youtube' ? 'btn-primary' : ''}" disabled={Boolean(connecting) || !creds?.configured[platform]}
+                  title={creds && !creds.configured[platform] ? `Enregistre d'abord les clés ${s.name} ci-dessus` : ''}
+                  onclick={() => connectAccount(platform)}>
+            {#if connecting === platform}<span class="spinner"></span>{:else}<Icon name={platform} />{/if}
+            {s.button}
+          </button>
+        {/each}
         {#if connecting}
           <button class="btn" onclick={cancelConnect}><Icon name="x" /> Annuler</button>
-        {:else if creds && !creds.configured.youtube}
-          <p class="text-sm text-muted">Enregistre d'abord les clés YouTube ci-dessus.</p>
         {/if}
       </div>
       {#if oauth}
@@ -526,13 +547,37 @@
             <p class="flex items-start gap-2 font-medium text-danger"><Icon name="alert" size={15} class="mt-0.5 shrink-0" />{oauth.error}</p>
           {:else}
             <p>
-              Une page Google s'est ouverte dans ton navigateur : choisis le compte de la chaîne et autorise l'accès.
+              Une page {SOCIAL[oauth.platform].site} s'est ouverte dans ton navigateur : choisis le compte et autorise l'accès.
               <span class="text-faint">(attente encore {Math.ceil(oauth.remaining / 60)} min)</span>
             </p>
             <a class="mt-1 inline-flex items-center gap-1 font-medium text-accent hover:underline" href={oauth.auth_url} target="_blank" rel="noreferrer">
-              Rouvrir la page Google <Icon name="external" size={12} />
+              Rouvrir la page {SOCIAL[oauth.platform].site} <Icon name="external" size={12} />
             </a>
           {/if}
+          {#if oauth.platform === 'tiktok'}
+          <details class="mt-3 text-muted" open={Boolean(oauth.error)}>
+            <summary class="cursor-pointer font-medium text-ink">TikTok affiche une erreur (redirect_uri, scope, client_key) ?</summary>
+            <ol class="mt-2 list-decimal space-y-1 pl-5">
+              <li>Sur <a class="font-medium text-accent hover:underline" href="https://developers.tiktok.com/apps" target="_blank" rel="noreferrer">developers.tiktok.com</a>, ouvre ton app : ajoute les produits <strong>Login Kit</strong> et <strong>Content Posting API</strong> (active <strong>Direct Post</strong>).</li>
+              <li>Login Kit › onglet <strong>Desktop</strong> : adresse de redirection <code>http://127.0.0.1:*/callback/</code>.</li>
+              <li>Scopes : <strong>user.info.basic</strong>, <strong>user.info.profile</strong>, <strong>video.publish</strong>.</li>
+              <li>App en <strong>Sandbox</strong> : ajoute ton compte TikTok dans les utilisateurs de test.</li>
+            </ol>
+            <p class="mt-2">Tant que l'app n'est pas auditée, TikTok n'accepte que des vidéos privées, sur un compte TikTok <strong>privé</strong> (Paramètres › Confidentialité).</p>
+          </details>
+          {:else if oauth.platform === 'instagram'}
+          <details class="mt-3 text-muted" open={Boolean(oauth.error)}>
+            <summary class="cursor-pointer font-medium text-ink">Facebook affiche une erreur, ou aucun compte n'est trouvé ?</summary>
+            <ol class="mt-2 list-decimal space-y-1 pl-5">
+              <li>Ton compte Instagram doit être <strong>professionnel</strong> (Créateur ou Entreprise) et relié à une <strong>Page Facebook</strong> (Instagram › Paramètres › Compte professionnel).</li>
+              <li>Sur <a class="font-medium text-accent hover:underline" href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer">developers.facebook.com</a>, app de type <strong>Entreprise</strong> avec <strong>Facebook Login for Business</strong> et <strong>Instagram</strong>.</li>
+              <li>Facebook Login › Paramètres : ajoute <code>http://localhost:8767/callback/</code> dans <strong>URI de redirection OAuth valides</strong>.</li>
+              <li>App en mode développement : ton compte Facebook doit être administrateur, développeur ou testeur de l'app (Rôles de l'app).</li>
+              <li>Pendant la connexion, coche la Page reliée à ton Instagram.</li>
+            </ol>
+            <p class="mt-2">Si Facebook demande une « configuration », crée-en une dans Facebook Login for Business (jeton d'utilisateur, autorisations instagram_basic, instagram_content_publish, pages_show_list, pages_read_engagement, business_management) et colle son ID dans la clé Instagram (champ Configuration ID).</p>
+          </details>
+          {:else}
           <details class="mt-3 text-muted" open={Boolean(oauth.error)}>
             <summary class="cursor-pointer font-medium text-ink">Google affiche « Erreur 403 » (access_denied ou org_internal) ?</summary>
             <ol class="mt-2 list-decimal space-y-1 pl-5">
@@ -547,6 +592,7 @@
             <p class="mt-2"><strong>« Erreur 403 : org_internal »</strong> : l'application est de type <strong>Interne</strong> (réservée aux comptes d'une organisation Google Workspace). Dans la même page Audience, clique sur « Rendre externe » puis ajoute ton adresse en utilisateur test. Si le bouton n'existe pas, le projet appartient à une organisation (école, entreprise) : crée un nouveau projet avec ton compte Gmail personnel, sans organisation.</p>
             <p class="mt-2">« Cette application n'a pas été validée par Google » : clique sur Paramètres avancés, puis « Accéder à AutoClip ». C'est normal pour ton propre projet.</p>
           </details>
+          {/if}
           {#if oauth.error}
             <button class="btn btn-sm mt-3" onclick={() => (oauth = null)}>Fermer</button>
           {/if}

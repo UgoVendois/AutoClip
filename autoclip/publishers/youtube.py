@@ -55,8 +55,7 @@ HELP_403 = ("Si Google a affiché « Erreur 403 : access_denied », ton projet G
 CONNECT_TIMEOUT = 300
 
 
-class OAuthCancelled(Exception):
-    pass
+from .oauth import OAuthCancelled  # noqa: E402  (même annulation pour tous les connecteurs)
 
 
 class ConnectFlow:
@@ -125,6 +124,23 @@ class ConnectFlow:
         # oauthlib exige https, même pour le retour local.
         self.flow.fetch_token(authorization_response=self._response.replace("http://", "https://", 1))
         return self.flow.credentials
+
+
+class YouTubeConnect:
+    """Même interface que les connexions TikTok et Instagram (oauth.LoopbackFlow)."""
+
+    platform = "youtube"
+
+    def __init__(self) -> None:
+        self.flow = ConnectFlow()
+        self.auth_url = self.flow.auth_url
+        self.deadline = self.flow.deadline
+
+    def cancel(self) -> None:
+        self.flow.cancel()
+
+    def wait_and_save(self, conn: sqlite3.Connection) -> int:
+        return save_connected_account(conn, self.flow.wait_credentials())
 
 
 def save_connected_account(conn: sqlite3.Connection, creds) -> int:
