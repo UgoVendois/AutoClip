@@ -29,10 +29,10 @@
   const targetId = $derived(form?.account_id ?? youtubeAccounts[0]?.id ?? null);
   const target = $derived(accounts.find((a) => a.id === targetId));
   // Page « Personnalisation > Image de marque » de la chaîne (la photo ne passe pas par l'API).
-  const studioImages = $derived.by(() => {
-    const id = target?.url?.split('/channel/')[1];
-    return id ? `https://studio.youtube.com/channel/${id}/editing/images` : STUDIO;
-  });
+  // Pages « Personnalisation » de la chaîne dans YouTube Studio (nom et photo : pas d'API).
+  const channelId = $derived(target?.url?.split('/channel/')[1] ?? null);
+  const studioImages = $derived(channelId ? `https://studio.youtube.com/channel/${channelId}/editing/images` : STUDIO);
+  const studioDetails = $derived(channelId ? `https://studio.youtube.com/channel/${channelId}/editing/details` : STUDIO);
 
   async function load() {
     try {
@@ -210,8 +210,9 @@
             <input id="name" class="input" maxlength="50" bind:value={form.name} oninput={touch} />
           </div>
           <button class="btn" onclick={() => copy(form.name, 'Nom')}><Icon name="copy" /> Copier</button>
-          <a class="btn" href={STUDIO} target="_blank" rel="noreferrer"><Icon name="external" /> YouTube Studio</a>
+          <a class="btn" href={studioDetails} target="_blank" rel="noreferrer"><Icon name="external" /> Renommer sur YouTube</a>
         </div>
+        <p class="hint mt-2">Copie le nom, puis dans la page qui s'ouvre : « Nom » › colle › Publier. YouTube limite les changements de nom (quelques fois par période de 14 jours).</p>
         <p class="hint mt-2">« {proposal.tagline} »</p>
       </Section>
 
