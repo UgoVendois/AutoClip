@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import threading
 from pathlib import Path
 from typing import Protocol
@@ -13,6 +14,23 @@ Word = dict  # {"start": float, "end": float, "word": str}
 
 class Transcriber(Protocol):
     def __call__(self, media: Path, model: str, language: str | None) -> dict: ...
+
+
+SAMPLE_RATE = 16000  # fréquence attendue par Whisper
+
+
+def decode_audio(media: Path):
+    """Audio mono 16 kHz en float32, décodé par ffmpeg.
+
+    faster-whisper décode d'habitude avec PyAV, mais son appel n'est plus compatible
+    avec PyAV 15+ (`metadata_errors`) : ffmpeg, déjà requis, fait le travail."""
+    import numpy as np
+
+    proc = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(media), "-vn", "-ac", "1",
+                           "-ar", str(SAMPLE_RATE), "-f", "f32le", "-"], capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg (audio) : {proc.stderr.decode(errors='replace').strip()[-300:]}")
+    return np.frombuffer(proc.stdout, dtype=np.float32)
 
 
 class FasterWhisperTranscriber:
@@ -37,7 +55,7 @@ class FasterWhisperTranscriber:
 
     def __call__(self, media: Path, model: str, language: str | None) -> dict:
         segments, info = self._model(model).transcribe(
-            str(media),
+            decode_audio(media),
             language=language,
             word_timestamps=True,
             vad_filter=True,
