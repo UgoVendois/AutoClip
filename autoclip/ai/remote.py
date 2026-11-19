@@ -38,6 +38,11 @@ def http_json(method: str, url: str, *, headers: dict[str, str], body: dict | No
             return json.load(resp)
     except urllib.error.HTTPError as exc:
         detail = _error_detail(exc)
+        if exc.code == 429 and _no_free_quota(detail):
+            raise AIProviderError(
+                f"{provider} : ce modèle n'a aucun quota gratuit (limite à 0 dans l'offre gratuite). "
+                "Active la facturation du projet sur aistudio.google.com (Paramètres > Facturation), "
+                "ou choisis un autre modèle ou fournisseur (le mode « SVG » des visuels est gratuit).") from exc
         if exc.code in PERMANENT_STATUS:
             raise AIProviderError(f"{provider} {exc.code} : {detail}") from exc
         raise RuntimeError(f"{provider} {exc.code} : {detail}") from exc
@@ -45,7 +50,12 @@ def http_json(method: str, url: str, *, headers: dict[str, str], body: dict | No
         raise RuntimeError(f"{provider} injoignable : {exc.reason}") from exc
 
 
-def _error_detail(exc: urllib.error.HTTPError) -> str:
+def _no_free_quota(detail: str) -> bool:
+    """Quota gratuit à 0 pour ce modèle (et non un quota épuisé) : réessayer ne sert à rien."""
+    return "free_tier" in detail and "limit: 0" in detail
+
+
+def _error_detail(exc: urllib.error.HTTPError, limit: int = 1500) -> str:
     try:
         with exc:
             raw = exc.read().decode(errors="replace")
@@ -54,10 +64,10 @@ def _error_detail(exc: urllib.error.HTTPError) -> str:
     try:
         err = json.loads(raw).get("error", raw)
         if isinstance(err, dict):
-            return str(err.get("message") or err)[:300]
-        return str(err)[:300]
+            return str(err.get("message") or err)[:limit]
+        return str(err)[:limit]
     except (ValueError, AttributeError):
-        return raw[:300]
+        return raw[:limit]
 
 
 def _parse(schema: type[T], text: str, provider: str) -> T:

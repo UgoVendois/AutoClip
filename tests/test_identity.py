@@ -90,6 +90,19 @@ class TestRemoteProviders(unittest.TestCase):
         self.assertIn("segments", cfg["responseJsonSchema"]["properties"])
         self.assertEqual(req["body"]["systemInstruction"]["parts"][0]["text"], "sys")
 
+    def test_zero_free_quota_is_permanent_and_explained(self):
+        provider = GeminiProvider("k", "gemini-3-pro-image")
+        msg = ("You exceeded your current quota.\n* Quota exceeded for metric: generativelanguage.googleapis.com/"
+               "generate_content_free_tier_requests, limit: 0, model: gemini-3-pro-image")
+        with self.assertRaises(AIProviderError) as ctx:
+            self.run_with(provider, http_error(429, msg))
+        self.assertIn("aucun quota gratuit", str(ctx.exception))
+        # Quota gratuit simplement épuisé (limite > 0) : la file réessaiera plus tard.
+        msg = "Quota exceeded for metric: generate_content_free_tier_requests, limit: 20, model: gemini-flash"
+        with self.assertRaises(RuntimeError) as ctx:
+            self.run_with(provider, http_error(429, msg))
+        self.assertNotIsInstance(ctx.exception, AIProviderError)
+
     def test_gemini_safety_block_is_a_refusal(self):
         resp = {"candidates": [{"finishReason": "SAFETY", "content": {"parts": []}}]}
         with self.assertRaises(AIRefusal):
